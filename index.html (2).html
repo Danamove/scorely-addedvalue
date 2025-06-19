@@ -1,0 +1,1045 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Scorely - LinkedIn Profile Ranking Tool</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="app-container">
+      <!-- Header -->
+      <header class="header">
+        <div class="logo">
+          <h1>Scorely</h1>
+          <span class="tagline">LinkedIn Profile Ranking Tool</span>
+        </div>
+        <div class="header-actions" style="display: flex; align-items: center; gap: 24px; margin-left: auto;">
+          <form id="api-key-form" style="display: flex; align-items: center; gap: 8px;">
+            <label for="api-key" style="font-weight: 500; color: #1976d2;">API Key:</label>
+            <input type="text" id="api-key" placeholder="Paste your API key..." style="width: 220px;">
+            <button type="button" class="save-btn" id="save-api-key-btn">Save</button>
+            <span class="saved-indicator" id="api-key-saved" style="display: none;">&#10003; Saved</span>
+          </form>
+          <button type="button" class="secondary-btn" id="restart-btn" style="margin-left: 10px;">Restart</button>
+        </div>
+      </header>
+
+      <!-- Main Content -->
+      <main class="main-content">
+        <!-- Progress Indicator -->
+        <div class="progress-bar">
+          <div class="progress-step active" data-step="1">
+            <span class="step-number">1</span>
+            <span class="step-label">Who are we looking for?</span>
+          </div>
+          <div class="progress-step" data-step="2">
+            <span class="step-number">2</span>
+            <span class="step-label">Pre-filter (Round 1)</span>
+          </div>
+          <div class="progress-step" data-step="3">
+            <span class="step-number">3</span>
+            <span class="step-label">Profile Summary</span>
+          </div>
+          <div class="progress-step" data-step="4">
+            <span class="step-number">4</span>
+            <span class="step-label">Advanced Pre-filter</span>
+          </div>
+          <div class="progress-step" data-step="5">
+            <span class="step-number">5</span>
+            <span class="step-label">Ranking</span>
+          </div>
+          <div class="progress-step" data-step="6">
+            <span class="step-number">6</span>
+            <span class="step-label">Results</span>
+          </div>
+        </div>
+
+        <!-- Step 1: Who are we looking for? -->
+        <div class="step-content active" id="step-1">
+          <div class="step-header">
+            <h2>Who are we looking for?</h2>
+            <p class="ai-explanation">
+              <i class="info-icon">ℹ</i>
+              Define your search criteria to help AI identify the best candidates for your role.
+              <span class="tooltip">AI will use these criteria to filter and rank candidates based on job requirements, experience, and company fit.</span>
+            </p>
+          </div>
+
+          <form class="search-criteria-form">
+            <!-- Job Description -->
+            <div class="form-section">
+              <label for="job-description">
+                Job Description (JD) <span class="required">*</span>
+                <i class="info-icon">ℹ</i>
+                <span class="tooltip">Upload or paste the job description. AI will analyze this to understand role requirements.</span>
+              </label>
+              <div class="input-group">
+                <textarea id="job-description" placeholder="Paste job description here or upload file..." maxlength="500"></textarea>
+                <div class="char-counter">0/500</div>
+                <input type="file" id="jd-file" accept=".txt,.pdf,.doc,.docx" class="file-input">
+                <button type="button" class="upload-btn" onclick="document.getElementById('jd-file').click()">Upload File</button>
+              </div>
+              <button type="button" class="save-btn" data-field="job-description">Save</button>
+              <span class="saved-indicator" style="display: none;">✓ Saved</span>
+            </div>
+
+            <!-- Ideal Profiles -->
+            <div class="form-section">
+              <label>
+                Ideal Profiles <span class="required">*</span>
+                <i class="info-icon">ℹ</i>
+                <span class="tooltip">Upload profiles of top candidates to help AI understand your ideal profile characteristics.</span>
+              </label>
+              <div class="ideal-profiles">
+                <div class="profile-slot">
+                  <label>Profile 1</label>
+                  <input type="file" accept=".html,.txt,.pdf" class="file-input">
+                  <button type="button" class="upload-btn">Upload Profile</button>
+                  <div class="linkedin-input-group" style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px; align-items: stretch;">
+                    <textarea class="linkedin-profile-textarea" placeholder="Paste full LinkedIn profile text here (Ctrl+A, Ctrl+C, Ctrl+V)..." style="min-height: 80px;"></textarea>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                      <button type="button" class="save-btn linkedin-save-btn">Save</button>
+                      <span class="saved-indicator linkedin-saved-indicator" style="display: none;">&#10003; Saved</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="profile-slot">
+                  <label>Profile 2</label>
+                  <input type="file" accept=".html,.txt,.pdf" class="file-input">
+                  <button type="button" class="upload-btn">Upload Profile</button>
+                  <div class="linkedin-input-group" style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px; align-items: stretch;">
+                    <textarea class="linkedin-profile-textarea" placeholder="Paste full LinkedIn profile text here (Ctrl+A, Ctrl+C, Ctrl+V)..." style="min-height: 80px;"></textarea>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                      <button type="button" class="save-btn linkedin-save-btn">Save</button>
+                      <span class="saved-indicator linkedin-saved-indicator" style="display: none;">&#10003; Saved</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <button type="button" class="save-btn" data-field="ideal-profiles">Save</button>
+              <span class="saved-indicator" style="display: none;">✓ Saved</span>
+            </div>
+
+            <!-- Target Companies -->
+            <div class="form-section">
+              <label for="target-companies">
+                Target Companies
+                <i class="info-icon">ℹ</i>
+                <span class="tooltip">Companies you want to source candidates from. Upload CSV or enter manually.</span>
+              </label>
+              <div class="input-group">
+                <textarea id="target-companies" placeholder="Enter company names, one per line..."></textarea>
+                <input type="file" id="companies-file" accept=".csv" class="file-input">
+                <button type="button" class="upload-btn" onclick="document.getElementById('companies-file').click()">Upload CSV</button>
+              </div>
+              <button type="button" class="save-btn" data-field="target-companies">Save</button>
+              <span class="saved-indicator" style="display: none;">✓ Saved</span>
+            </div>
+
+            <!-- Experience Range -->
+            <div class="form-section">
+              <label>
+                Range of Experience (Years)
+                <i class="info-icon">ℹ</i>
+                <span class="tooltip">Define the minimum and maximum years of experience required for the role.</span>
+              </label>
+              <div class="range-inputs">
+                <div class="range-input">
+                  <label for="min-experience">Min</label>
+                  <input type="number" id="min-experience" min="0" max="50" placeholder="0">
+                </div>
+                <div class="range-input">
+                  <label for="max-experience">Max</label>
+                  <input type="number" id="max-experience" min="0" max="50" placeholder="10">
+                </div>
+              </div>
+              <button type="button" class="save-btn" data-field="experience-range">Save</button>
+              <span class="saved-indicator" style="display: none;">✓ Saved</span>
+            </div>
+
+            <!-- Industry -->
+            <div class="form-section">
+              <label>
+                Industry
+                <i class="info-icon">ℹ</i>
+                <span class="tooltip">Select relevant industries. AI will prioritize candidates from these sectors.</span>
+              </label>
+              <div class="multi-select" id="industry-select">
+                <div class="select-options">
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="saas">
+                    <span>SaaS</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="data">
+                    <span>Data</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="security">
+                    <span>Security</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="fintech">
+                    <span>Fintech</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="ai">
+                    <span>AI</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="other">
+                    <span>Other</span>
+                  </label>
+                </div>
+                <div class="custom-input">
+                  <input type="text" placeholder="Add custom industry..." id="custom-industry">
+                  <button type="button" class="add-btn">Add</button>
+                </div>
+              </div>
+              <button type="button" class="save-btn" data-field="industry">Save</button>
+              <span class="saved-indicator" style="display: none;">✓ Saved</span>
+            </div>
+
+            <!-- Education -->
+            <div class="form-section">
+              <label>
+                Education
+                <i class="info-icon">ℹ</i>
+                <span class="tooltip">Select preferred educational institutions. AI will consider this in ranking.</span>
+              </label>
+              <div class="multi-select" id="education-select">
+                <div class="select-actions">
+                  <button type="button" class="select-all-btn">Select All</button>
+                  <button type="button" class="clear-all-btn">Clear All</button>
+                </div>
+                <div class="select-options">
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="hebrew-university">
+                    <span>Hebrew University of Jerusalem</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="technion">
+                    <span>Technion – Israel Institute of Technology</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="tel-aviv-university">
+                    <span>Tel Aviv University</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="bar-ilan">
+                    <span>Bar-Ilan University</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="ben-gurion">
+                    <span>Ben-Gurion University of the Negev</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="weizmann">
+                    <span>Weizmann Institute of Science</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="reichman">
+                    <span>Reichman University</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="haifa">
+                    <span>University of Haifa</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="academic-college">
+                    <span>The Academic College of Tel‑Aviv‑Yaffo</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="not-relevant">
+                    <span>Not Relevant Institution</span>
+                  </label>
+                </div>
+                <div class="custom-input">
+                  <input type="text" placeholder="Add custom institution..." id="custom-education">
+                  <button type="button" class="add-btn">Add</button>
+                </div>
+              </div>
+              <button type="button" class="save-btn" data-field="education">Save</button>
+              <span class="saved-indicator" style="display: none;">✓ Saved</span>
+            </div>
+
+            <!-- Custom Traits -->
+            <div class="form-section">
+              <label>
+                Custom Traits
+                <i class="info-icon">ℹ</i>
+                <span class="tooltip">Add specific traits or characteristics you're looking for in candidates.</span>
+              </label>
+              <div class="traits-container">
+                <div class="traits-list" id="traits-list">
+                  <!-- Traits will be added here dynamically -->
+                </div>
+                <div class="trait-examples">
+                  <span class="example-label">Examples:</span>
+                  <span class="example">"Strong leadership skills"</span>,
+                  <span class="example">"Experience in fast-paced startups"</span>,
+                  <span class="example">"Excellent communication"</span>,
+                  <span class="example">"Hands-on with AI/ML"</span>
+                </div>
+                <div class="trait-input">
+                  <input type="text" placeholder="Add a trait..." id="trait-input">
+                  <button type="button" class="add-trait-btn">Add Trait</button>
+                </div>
+              </div>
+              <button type="button" class="save-btn" data-field="custom-traits">Save</button>
+              <span class="saved-indicator" style="display: none;">✓ Saved</span>
+            </div>
+
+            <!-- Hot Signals -->
+            <div class="form-section">
+              <label for="hot-signals">
+                Hot Signals
+                <i class="info-icon">ℹ</i>
+                <span class="tooltip">Companies with layoffs, closures, or other alerts that might indicate available talent.</span>
+              </label>
+              <div class="input-group">
+                <textarea id="hot-signals" placeholder="Enter company names with alerts, one per line..."></textarea>
+                <input type="file" id="signals-file" accept=".csv,.json" class="file-input">
+                <button type="button" class="upload-btn" onclick="document.getElementById('signals-file').click()">Upload File</button>
+              </div>
+              <button type="button" class="save-btn" data-field="hot-signals">Save</button>
+              <span class="saved-indicator" style="display: none;">✓ Saved</span>
+            </div>
+
+            <!-- Ranking Weights -->
+            <div class="form-section">
+              <label>
+                Ranking Weights
+                <i class="info-icon">ℹ</i>
+                <span class="tooltip">Adjust the importance of different factors in the AI ranking algorithm.</span>
+              </label>
+              <div class="weights-container">
+                <div class="weight-item">
+                  <label for="tech-fit">Tech Fit</label>
+                  <span class="weight-desc">How well the candidate's technical skills match the job requirements.</span>
+                  <div class="slider-container">
+                    <input type="range" id="tech-fit" min="0" max="100" value="30" class="weight-slider">
+                    <span class="slider-value">30%</span>
+                  </div>
+                </div>
+                <div class="weight-item">
+                  <label for="experience">Experience</label>
+                  <span class="weight-desc">Years and relevance of professional experience.</span>
+                  <div class="slider-container">
+                    <input type="range" id="experience" min="0" max="100" value="25" class="weight-slider">
+                    <span class="slider-value">25%</span>
+                  </div>
+                </div>
+                <div class="weight-item">
+                  <label for="custom-traits-weight">Custom Traits</label>
+                  <span class="weight-desc">How well the candidate matches your defined custom traits.</span>
+                  <div class="slider-container">
+                    <input type="range" id="custom-traits-weight" min="0" max="100" value="20" class="weight-slider">
+                    <span class="slider-value">20%</span>
+                  </div>
+                </div>
+                <div class="weight-item">
+                  <label for="startup-fit">Startup Fit</label>
+                  <span class="weight-desc">Suitability for dynamic, startup-like environments.</span>
+                  <div class="slider-container">
+                    <input type="range" id="startup-fit" min="0" max="100" value="15" class="weight-slider">
+                    <span class="slider-value">15%</span>
+                  </div>
+                </div>
+                <div class="weight-item">
+                  <label for="education-weight">Education</label>
+                  <span class="weight-desc">Alignment with preferred educational background.</span>
+                  <div class="slider-container">
+                    <input type="range" id="education-weight" min="0" max="100" value="10" class="weight-slider">
+                    <span class="slider-value">10%</span>
+                  </div>
+                </div>
+              </div>
+              <button type="button" class="save-btn" data-field="ranking-weights">Save</button>
+              <span class="saved-indicator" style="display: none;">✓ Saved</span>
+            </div>
+          </form>
+        </div>
+
+        <!-- Step 2: Pre-filter (Round 1) -->
+        <div class="step-content" id="step-2">
+          <div class="step-header">
+            <h2>Pre-filter (Round 1)</h2>
+            <p class="ai-explanation">
+              <i class="info-icon">ℹ</i>
+              AI performs deduplication and initial filtering based on Blacklist, Past Candidates, and No-Go Companies.
+              <span class="tooltip">This step removes duplicate profiles and filters out candidates from companies you don't want to source from, or candidates you've already considered.</span>
+            </p>
+          </div>
+
+          <!-- File Upload & Column Mapping -->
+          <div class="form-section">
+            <h3>File Upload & Column Mapping</h3>
+            <div class="upload-section">
+              <div class="file-upload-area">
+                <input type="file" id="profiles-file" accept=".csv,.xlsx" class="file-input">
+                <div class="upload-zone" onclick="document.getElementById('profiles-file').click()">
+                  <div class="upload-icon">📁</div>
+                  <p>Click to upload CSV or XLSX file</p>
+                  <p class="upload-hint">File should contain columns for First Name, Last Name, and Company</p>
+                </div>
+              </div>
+              
+              <div class="column-mapping" id="column-mapping" style="display: none;">
+                <h4>Map Your Columns</h4>
+                <p>Please map your file columns to the required fields:</p>
+                <div class="mapping-grid">
+                  <div class="mapping-item">
+                    <label>First Name</label>
+                    <select id="map-first-name" class="mapping-select">
+                      <option value="">Select column...</option>
+                    </select>
+                  </div>
+                  <div class="mapping-item">
+                    <label>Last Name</label>
+                    <select id="map-last-name" class="mapping-select">
+                      <option value="">Select column...</option>
+                    </select>
+                  </div>
+                  <div class="mapping-item">
+                    <label>Company</label>
+                    <select id="map-company" class="mapping-select">
+                      <option value="">Select column...</option>
+                    </select>
+                  </div>
+                  <div class="mapping-item">
+                    <label>Title</label>
+                    <select id="map-title" class="mapping-select">
+                      <option value="">Select column...</option>
+                    </select>
+                  </div>
+                  <div class="mapping-item">
+                    <label>LinkedIn</label>
+                    <select id="map-linkedin" class="mapping-select">
+                      <option value="">Select column...</option>
+                    </select>
+                  </div>
+                </div>
+                <button type="button" class="save-btn" data-field="column-mapping" onclick="app.saveColumnMapping()">Save Mapping</button>
+                <span class="saved-indicator" style="display: none;">✓ Mapping Saved</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Filtering Lists -->
+          <div class="form-section">
+            <h3>Filtering Lists</h3>
+            
+            <!-- Blacklist -->
+            <div class="filter-list">
+              <label for="blacklist">
+                Blacklist
+                <i class="info-icon">ℹ</i>
+                <span class="tooltip">Companies you never want to source candidates from. Profiles are filtered if they currently work at these companies.</span>
+              </label>
+              <textarea id="blacklist" placeholder="Enter company names, one per line..."></textarea>
+              <div class="list-actions">
+                <button type="button" class="save-btn" onclick="app.saveFilterList('blacklist')">Save</button>
+                <button type="button" class="clear-btn" onclick="app.clearFilterList('blacklist')">Clear</button>
+                <span class="saved-indicator" style="display: none;">✓ Saved</span>
+              </div>
+            </div>
+
+            <!-- Past Candidates -->
+            <div class="filter-list">
+              <label for="past-candidates">
+                Past Candidates
+                <i class="info-icon">ℹ</i>
+                <span class="tooltip">Names or LinkedIn URLs of candidates you've already considered.</span>
+              </label>
+              <textarea id="past-candidates" placeholder="Enter names or LinkedIn URLs, one per line..."></textarea>
+              <div class="list-actions">
+                <button type="button" class="save-btn" onclick="app.saveFilterList('pastCandidates')">Save</button>
+                <button type="button" class="clear-btn" onclick="app.clearFilterList('pastCandidates')">Clear</button>
+                <span class="saved-indicator" style="display: none;">✓ Saved</span>
+              </div>
+            </div>
+
+            <!-- No-Go Companies -->
+            <div class="filter-list">
+              <label for="no-go-companies">
+                No-Go Companies
+                <i class="info-icon">ℹ</i>
+                <span class="tooltip">Companies to avoid - profiles are filtered if they currently work OR have worked in the past at these companies.</span>
+              </label>
+              <div class="no-go-explanation" style="margin-bottom: 10px; color: #1976d2; font-size: 1rem;">
+                <strong>Explanation:</strong> Candidates will be filtered out if they currently work <u>or</u> have worked in the past at any of the companies in this list. Use this to exclude candidates with any history at these organizations.
+              </div>
+              <div class="no-go-preset">
+                <h5>Preset Companies:</h5>
+                <div class="preset-companies">
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="isracard" checked>
+                    <span>Isracard</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="matrix" checked>
+                    <span>Matrix</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="harel" checked>
+                    <span>Harel Insurance & Finance</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="ness" checked>
+                    <span>Ness Technologies</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="bank-leumi" checked>
+                    <span>Bank Leumi</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="gav-systems" checked>
+                    <span>GAV Systems</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="amdocs" checked>
+                    <span>Amdocs</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="log-on" checked>
+                    <span>Log-On Software</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="sapiens" checked>
+                    <span>Sapiens</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="aman-group" checked>
+                    <span>Aman Group</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="nice" checked>
+                    <span>NICE</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="maccabi-healthcare" checked>
+                    <span>Maccabi Healthcare Services</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="zap-group" checked>
+                    <span>Zap Group</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="clalit" checked>
+                    <span>Clalit Health Services</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="bank-hapoalim" checked>
+                    <span>Bank Hapoalim</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="tax-authority" checked>
+                    <span>Israel Tax Authority</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="discount-bank" checked>
+                    <span>Discount Bank</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="infanity-labs" checked>
+                    <span>Infanity Labs</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="experis-israel" checked>
+                    <span>Experis Israel</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="sapiens-international" checked>
+                    <span>Sapiens International</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="magic-software" checked>
+                    <span>Magic Software Enterprises</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="ethernity" checked>
+                    <span>Ethernity Networks</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="elad-software" checked>
+                    <span>Elad Software Systems</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="mizrahi-tefahot" checked>
+                    <span>Mizrahi-Tefahot Bank</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="migdal" checked>
+                    <span>Migdal Insurance</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="menora" checked>
+                    <span>Menora Mivtachim</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="clal-insurance" checked>
+                    <span>Clal Insurance</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="taldor" checked>
+                    <span>Taldor</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="bynet" checked>
+                    <span>Bynet Data Communications</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="hachshara" checked>
+                    <span>Hachshara Insurance</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="psagot" checked>
+                    <span>Psagot Investment House</span>
+                  </label>
+                  <label class="checkbox-option">
+                    <input type="checkbox" value="max-it-finance" checked>
+                    <span>Max (It Finance)</span>
+                  </label>
+                </div>
+              </div>
+              <div class="custom-no-go">
+                <label for="custom-no-go-input">Add Custom No-Go Company:</label>
+                <div class="custom-input">
+                  <input type="text" id="custom-no-go-input" placeholder="Enter company name...">
+                  <button type="button" class="add-btn" onclick="app.addCustomNoGo()">Add</button>
+                </div>
+              </div>
+              <textarea id="no-go-companies" placeholder="Custom no-go companies (one per line)..."></textarea>
+              <div class="list-actions">
+                <button type="button" class="save-btn" onclick="app.saveFilterList('noGoCompanies')">Save</button>
+                <button type="button" class="clear-btn" onclick="app.clearFilterList('noGoCompanies')">Clear</button>
+                <span class="saved-indicator" style="display: none;">✓ Saved</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- First Filter Execution -->
+          <div class="form-section">
+            <h3>First Filter Execution</h3>
+            <div class="filter-controls">
+              <button type="button" class="primary-btn" onclick="app.runFiltering()">Run Filtering</button>
+              <button type="button" class="secondary-btn" onclick="app.clearDashboard()">Clear Dashboard</button>
+            </div>
+          </div>
+
+          <!-- Dashboard -->
+          <div class="form-section">
+            <h3>Filtering Dashboard</h3>
+            <div class="dashboard-stats">
+              <div class="stat-card">
+                <div class="stat-number" id="uploaded-count">0</div>
+                <div class="stat-label">Profiles Uploaded</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-number" id="filtered-out-count">0</div>
+                <div class="stat-label">Filtered Out</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-number" id="remaining-count">0</div>
+                <div class="stat-label">Remaining</div>
+              </div>
+            </div>
+            
+            <div class="filter-breakdown">
+              <h4>Filter Breakdown</h4>
+              <div class="breakdown-item">
+                <span class="breakdown-label">Duplicates:</span>
+                <span class="breakdown-count" id="duplicates-count">0</span>
+              </div>
+              <div class="breakdown-item">
+                <span class="breakdown-label">Blacklist:</span>
+                <span class="breakdown-count" id="blacklist-count">0</span>
+              </div>
+              <div class="breakdown-item">
+                <span class="breakdown-label">Past Candidates:</span>
+                <span class="breakdown-count" id="past-candidates-count">0</span>
+              </div>
+              <div class="breakdown-item">
+                <span class="breakdown-label">No-Go Companies:</span>
+                <span class="breakdown-count" id="no-go-count">0</span>
+              </div>
+            </div>
+          </div>
+          <div style="margin-top: 32px; text-align: right;">
+            <button type="button" class="secondary-btn" id="skip-to-ranking-btn">Skip to Ranking</button>
+          </div>
+        </div>
+
+        <!-- Step 3: Profile Summary Mapping -->
+        <div class="step-content" id="step-3" style="display: none;">
+            <div class="step-header">
+                <h2>Profile Summary Mapping</h2>
+                <p class="ai-explanation">
+                    <i class="info-icon">ℹ</i>
+                    AI concatenates the selected columns into a Profile Summary for advanced analysis.
+                    <span class="tooltip">Select which columns from your uploaded file should be combined into a single profile summary that will be used for AI analysis and ranking.</span>
+                </p>
+            </div>
+
+            <!-- Column Selection -->
+            <div class="form-section">
+                <h3>Select Columns for Profile Summary</h3>
+                <div class="column-selection-info">
+                    <p>Choose which columns from your uploaded file should be included in the Profile Summary. This combined text will be used by AI for analysis and ranking.</p>
+                </div>
+                
+                <div class="column-selection" id="column-selection">
+                    <div class="selection-actions">
+                        <button type="button" class="select-all-btn" onclick="app.selectAllColumns()">Select All</button>
+                        <button type="button" class="clear-all-btn" onclick="app.clearAllColumns()">Clear All</button>
+                    </div>
+                    
+                    <div class="columns-grid" id="columns-grid">
+                        <!-- Columns will be populated dynamically -->
+                    </div>
+                </div>
+                
+                <div class="summary-actions">
+                    <button type="button" class="save-btn" onclick="app.saveColumnSelection()">Save Selection</button>
+                    <button type="button" class="preview-btn" onclick="app.previewProfileSummary()">Preview Summary</button>
+                    <span class="saved-indicator" style="display: none;">✓ Selection Saved</span>
+                </div>
+            </div>
+
+            <!-- Profile Summary Preview -->
+            <div class="form-section" id="preview-section" style="display: none;">
+                <h3>Profile Summary Preview</h3>
+                <div class="preview-container">
+                    <div class="preview-sample" id="preview-sample">
+                        <!-- Preview will be shown here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Summary Statistics -->
+            <div class="form-section">
+                <h3>Summary Statistics</h3>
+                <div class="summary-stats">
+                    <div class="summary-card">
+                        <div class="summary-number" id="total-profiles">0</div>
+                        <div class="summary-label">Total Profiles</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-number" id="selected-columns">0</div>
+                        <div class="summary-label">Selected Columns</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-number" id="avg-summary-length">0</div>
+                        <div class="summary-label">Avg Summary Length</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 4: Advanced Pre-filter -->
+        <div class="step-content" id="step-4" style="display: none;">
+            <div class="step-header">
+                <h2>Advanced Pre-filter</h2>
+                <p class="ai-explanation">
+                    <i class="info-icon">ℹ</i>
+                    Apply additional filters based on experience, location, and other criteria before ranking.
+                    <span class="tooltip">These filters help narrow down the candidate pool before the AI ranking process begins.</span>
+                </p>
+            </div>
+
+            <!-- Advanced Filter Options -->
+            <div class="advanced-filter-section">
+                <h3>Filter Options</h3>
+                
+                <div class="filter-option">
+                    <label>
+                        <input type="checkbox" id="filter-experience">
+                        Experience Range Filter
+                    </label>
+                    <div class="filter-description">
+                        Filter candidates based on years of experience (uses the range defined in Step 1).
+                    </div>
+                </div>
+
+                <div class="filter-option">
+                    <label>
+                        <input type="checkbox" id="filter-location">
+                        Location Filter
+                    </label>
+                    <div class="filter-description">
+                        Filter candidates based on geographic location preferences.
+                    </div>
+                </div>
+
+                <div class="filter-option">
+                    <label>
+                        <input type="checkbox" id="filter-industry">
+                        Industry Filter
+                    </label>
+                    <div class="filter-description">
+                        Filter candidates based on industry background (uses industries selected in Step 1).
+                    </div>
+                </div>
+
+                <div class="filter-option">
+                    <label>
+                        <input type="checkbox" id="filter-education">
+                        Education Filter
+                    </label>
+                    <div class="filter-description">
+                        Filter candidates based on educational background (uses institutions selected in Step 1).
+                    </div>
+                </div>
+            </div>
+
+            <!-- Apply Filters -->
+            <div class="form-section">
+                <h3>Apply Advanced Filters</h3>
+                <div class="filter-controls">
+                    <button type="button" class="primary-btn" onclick="app.applyAdvancedFilters()">Apply Filters</button>
+                    <button type="button" class="secondary-btn" onclick="app.resetAdvancedFilters()">Reset Filters</button>
+                </div>
+            </div>
+
+            <!-- Advanced Filter Results -->
+            <div class="form-section">
+                <h3>Filter Results</h3>
+                <div class="dashboard-stats">
+                    <div class="stat-card">
+                        <div class="stat-number" id="pre-filter-count">0</div>
+                        <div class="stat-label">Before Filtering</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="post-filter-count">0</div>
+                        <div class="stat-label">After Filtering</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="advanced-filtered-count">0</div>
+                        <div class="stat-label">Filtered Out</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 5: Ranking -->
+        <div class="step-content" id="step-5" style="display: none;">
+            <div class="step-header">
+                <h2>AI Ranking</h2>
+                <p class="ai-explanation">
+                    <i class="info-icon">ℹ</i>
+                    AI ranks candidates based on your criteria using advanced language models.
+                    <span class="tooltip">The AI analyzes each candidate's profile against your job requirements and ideal candidate profiles to generate rankings.</span>
+                </p>
+            </div>
+
+            <!-- Ranking Mode Selection -->
+            <div class="form-section">
+                <h3>Ranking Mode</h3>
+                <div class="ranking-mode-selection">
+                    <label class="mode-option">
+                        <input type="radio" name="ranking-mode" value="embedding" checked>
+                        <span class="mode-title">Embedding Only</span>
+                        <span class="mode-description">Fast and cost-effective using semantic similarity</span>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="ranking-mode" value="gpt">
+                        <span class="mode-title">GPT-4o</span>
+                        <span class="mode-description">High accuracy using advanced language model</span>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="ranking-mode" value="hybrid">
+                        <span class="mode-title">Hybrid (Recommended)</span>
+                        <span class="mode-description">Balanced approach combining both methods</span>
+                    </label>
+                </div>
+                <div class="economy-mode" style="margin-top: 15px;">
+                    <label style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="economy-mode" style="width: 16px; height: 16px;">
+                        <span style="font-weight: 500;">Economy Mode</span>
+                    </label>
+                    <div class="economy-mode-explanation">
+                        In this mode, borderline candidates (embedding score 0.6–0.8) are analyzed using <b>GPT-3.5-turbo</b> (cost-effective), while top candidates (embedding ≥ 0.8) are analyzed using <b>GPT-4o</b> (high accuracy).
+                    </div>
+                </div>
+                <div class="hybrid-thresholds" style="margin: 12px 0 0 0; display: flex; gap: 18px; align-items: center;">
+                    <label for="top-threshold" style="font-weight:500; color:#2196F3;">Top Threshold
+                        <i class="info-icon">ℹ</i>
+                        <span class="tooltip">Profiles with embedding score ≥ this value are ranked as Top/Good by embedding only.</span>
+                    </label>
+                    <input type="number" id="top-threshold" min="0.7" max="1" step="0.01" value="0.85" style="width:70px;">
+                    <label for="borderline-threshold" style="font-weight:500; color:#2196F3;">Borderline Threshold
+                        <i class="info-icon">ℹ</i>
+                        <span class="tooltip">Profiles with embedding score between this value and the Top Threshold are ranked using Embedding+GPT-4.5. Below this value are rejected.</span>
+                    </label>
+                    <input type="number" id="borderline-threshold" min="0.5" max="0.85" step="0.01" value="0.60" style="width:70px;">
+                </div>
+                <div class="hybrid-explanation" style="color:#1976d2; font-size:0.97rem; margin-top:8px;">
+                    <b>How does Hybrid Ranking work?</b><br>
+                    <ul style="margin: 6px 0 0 18px; padding:0;">
+                        <li>Embedding only: score ≥ <span id="top-threshold-label">0.85</span></li>
+                        <li>Embedding + GPT-4.5: <span id="borderline-threshold-label">0.60</span> ≤ score &lt; <span id="top-threshold-label-2">0.85</span></li>
+                        <li>Below <span id="borderline-threshold-label-2">0.60</span>: profile is rejected</li>
+                    </ul>
+                    You can adjust these thresholds above to control the strictness of the ranking.
+                </div>
+            </div>
+
+            <!-- Row Range -->
+            <div class="form-section">
+                <h3>Row Range</h3>
+                <div class="row-range-info">
+                    <p>Define which rows to process. Start Row always begins at 2 (header is row 1).</p>
+                </div>
+                <div class="row-range-inputs">
+                    <div class="range-input">
+                        <label for="start-row">Start Row</label>
+                        <input type="number" id="start-row" min="2" value="2">
+                    </div>
+                    <div class="range-input">
+                        <label for="end-row">End Row</label>
+                        <input type="number" id="end-row" min="2" value="100">
+                    </div>
+                </div>
+                <div class="row-range-summary" style="margin-top: 12px; padding: 10px; background: #f5f5f5; border-radius: 6px; border-left: 4px solid #2196F3;">
+                    <div style="font-weight: 600; color: #2196F3; margin-bottom: 4px;">Range Summary</div>
+                    <div style="font-size: 0.95rem;">
+                        <span>Next ranking starts at row: <strong id="next-ranking-start">2</strong></span><br>
+                        <span>Total profiles to rank: <strong id="total-profiles-count">0</strong></span><br>
+                        <span>Current range: <strong id="current-range-display">2-100</strong></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Ranking Controls -->
+            <div class="form-section">
+                <h3>Ranking Controls</h3>
+                <div class="ranking-controls">
+                    <button type="button" class="primary-btn" id="start-ranking-btn" onclick="app.startRanking()">Start Ranking</button>
+                    <button type="button" class="secondary-btn" id="stop-ranking-btn" onclick="app.stopRanking()" disabled>Stop Ranking</button>
+                </div>
+            </div>
+
+            <!-- Ranking Progress -->
+            <div class="form-section">
+                <h3>Ranking Progress</h3>
+                <div id="ranking-progress-indicator" style="display:none; margin-bottom: 18px; text-align: center;"></div>
+            </div>
+
+            <!-- Ranking Status -->
+            <div class="form-section">
+                <h3>Ranking Status</h3>
+                <div class="ranking-status">
+                    <div class="status-item">
+                        <span class="status-label">Batches Processed:</span>
+                        <span class="status-value" id="batches-processed">0</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Profiles Ranked:</span>
+                        <span class="status-value" id="profiles-ranked">0</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Errors:</span>
+                        <span class="status-value" id="ranking-errors">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 6: Results Dashboard -->
+        <div class="step-content" id="step-6" style="display: none;">
+            <div class="step-header">
+                <h2>Results Dashboard</h2>
+                <p class="ai-explanation">
+                    <i class="info-icon">ℹ</i>
+                    Review, search, and export your ranked candidates. Adjust filters and rerun as needed.
+                </p>
+            </div>
+            <!-- Results Tabs -->
+            <div class="results-tabs">
+                <button class="tab-btn active" data-tab="top" onclick="app.switchResultsTab('top')">Top</button>
+                <button class="tab-btn" data-tab="good" onclick="app.switchResultsTab('good')">Good</button>
+                <button class="tab-btn" data-tab="hidden" onclick="app.switchResultsTab('hidden')">Hidden Gems</button>
+                <button class="tab-btn" data-tab="hot" onclick="app.switchResultsTab('hot')">Hot Signals</button>
+                <button class="tab-btn" data-tab="all" onclick="app.switchResultsTab('all')">All</button>
+            </div>
+            <!-- Results Actions -->
+            <div class="results-actions">
+                <input type="text" class="search-bar" id="results-search" placeholder="Search by name, company, skill..." oninput="app.searchResults()">
+                <button class="export-btn" onclick="app.exportResultsCSV()">Download CSV</button>
+            </div>
+            <!-- Results Stats -->
+            <div class="results-stats">
+                <div class="stat-card top-stat"><div class="stat-label">Top</div><div class="stat-value" id="top-count">0</div></div>
+                <div class="stat-card good-stat"><div class="stat-label">Good</div><div class="stat-value" id="good-count">0</div></div>
+                <div class="stat-card hidden-stat"><div class="stat-label">Hidden</div><div class="stat-value" id="hidden-count">0</div></div>
+                <div class="stat-card hot-stat"><div class="stat-label">Hot</div><div class="stat-value" id="hot-count">0</div></div>
+            </div>
+            <!-- Candidate Table List -->
+            <div class="candidates-list" id="candidates-list">
+                <table class="results-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Company</th>
+                            <th>Title</th>
+                            <th>Score</th>
+                            <th>Category</th>
+                            <th>LinkedIn</th>
+                            <th>View</th>
+                        </tr>
+                    </thead>
+                    <tbody id="candidates-tbody">
+                        <!-- Candidate rows will be rendered here -->
+                    </tbody>
+                </table>
+            </div>
+            <!-- Candidate Details Modal -->
+            <div class="candidate-modal" id="candidate-modal" style="display: none;">
+                <div class="modal-content">
+                    <button class="close-modal" onclick="app.closeCandidateModal()">&times;</button>
+                    <h3>Candidate Details</h3>
+                    <div id="candidate-details">
+                        <!-- Candidate details will be rendered here -->
+                    </div>
+                </div>
+            </div>
+            <!-- Re-categorize Modal -->
+            <div class="recategorize-modal" id="recategorize-modal" style="display: none;">
+                <div class="modal-content">
+                    <button class="close-modal" onclick="app.closeRecategorizeModal()">&times;</button>
+                    <h3>Re-categorize Candidate</h3>
+                    <div class="recategorize-form">
+                        <label for="recategorize-category">New Category</label>
+                        <select id="recategorize-category">
+                            <option value="top">Top</option>
+                            <option value="good">Good</option>
+                            <option value="hidden">Hidden Gems</option>
+                            <option value="not-qualified">Not Qualified</option>
+                        </select>
+                        <label for="recategorize-reason">Reason (required)</label>
+                        <textarea id="recategorize-reason" placeholder="Provide a reason for re-categorization..."></textarea>
+                        <button class="save-btn" onclick="app.submitRecategorize()">Submit</button>
+                        <button class="secondary-btn" onclick="app.closeRecategorizeModal()">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+      </main>
+
+      <!-- Bottom Navigation -->
+      <nav class="bottom-navigation">
+        <button class="nav-btn prev-btn" disabled>Previous</button>
+        <button class="nav-btn next-btn">Next</button>
+      </nav>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+    <script src="app.js" defer></script>
+  </body>
+</html>
+
