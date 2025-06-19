@@ -714,114 +714,247 @@
             <!-- Profile Summary Preview -->
             <div class="form-section" id="preview-section" style="display: none;">
                 <h3>Profile Summary Preview</h3>
+                <div class="preview-info">
+                    <p>This is how the Profile Summary will look for the first record in your file:</p>
+                </div>
+                
                 <div class="preview-container">
-                    <div class="preview-sample" id="preview-sample">
-                        <!-- Preview will be shown here -->
+                    <div class="preview-header">
+                        <span class="preview-label">Generated Profile Summary:</span>
+                        <button type="button" class="copy-btn" onclick="app.copyProfileSummary()">Copy</button>
+                    </div>
+                    <div class="preview-content" id="preview-content">
+                        <!-- Preview content will be populated here -->
+                    </div>
+                </div>
+                
+                <div class="preview-stats">
+                    <div class="stat-item">
+                        <span class="stat-label">Characters:</span>
+                        <span class="stat-value" id="char-count">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Words:</span>
+                        <span class="stat-value" id="word-count">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Selected Columns:</span>
+                        <span class="stat-value" id="selected-columns-count">0</span>
                     </div>
                 </div>
             </div>
 
-            <!-- Summary Statistics -->
-            <div class="form-section">
-                <h3>Summary Statistics</h3>
-                <div class="summary-stats">
-                    <div class="summary-card">
-                        <div class="summary-number" id="total-profiles">0</div>
-                        <div class="summary-label">Total Profiles</div>
-                    </div>
-                    <div class="summary-card">
-                        <div class="summary-number" id="selected-columns">0</div>
-                        <div class="summary-label">Selected Columns</div>
-                    </div>
-                    <div class="summary-card">
-                        <div class="summary-number" id="avg-summary-length">0</div>
-                        <div class="summary-label">Avg Summary Length</div>
-                    </div>
+            <!-- Sample Record Display -->
+            <div class="form-section" id="sample-record-section" style="display: none;">
+                <h3>Sample Record</h3>
+                <div class="sample-info">
+                    <p>Original data from the first record in your file:</p>
+                </div>
+                
+                <div class="sample-record" id="sample-record">
+                    <!-- Sample record will be displayed here -->
                 </div>
             </div>
         </div>
 
-        <!-- Step 4: Advanced Pre-filter -->
+        <!-- Step 4: Advanced Pre-filter (Round 2) -->
         <div class="step-content" id="step-4" style="display: none;">
             <div class="step-header">
-                <h2>Advanced Pre-filter</h2>
+                <h2>Advanced Pre-filter (Round 2)</h2>
                 <p class="ai-explanation">
                     <i class="info-icon">ℹ</i>
-                    Apply additional filters based on experience, location, and other criteria before ranking.
-                    <span class="tooltip">These filters help narrow down the candidate pool before the AI ranking process begins.</span>
+                    <b>This step is optional.</b> You can proceed to Ranking after the first filter if you wish.<br>
+                    AI uses embeddings to identify synonyms in titles and skills, filtering out unsuitable candidates.
+                    <span class="tooltip">This step uses advanced AI embeddings to catch nuanced patterns, synonyms, and context that simple text matching might miss.</span>
                 </p>
             </div>
 
-            <!-- Advanced Filter Options -->
-            <div class="advanced-filter-section">
-                <h3>Filter Options</h3>
+            <!-- Title Matching -->
+            <div class="form-section">
+                <h3>Title Matching</h3>
+                <div class="matching-info">
+                    <p>AI will compute embedding similarity between Profile Summary and role synonyms to identify suitable candidates.</p>
+                </div>
                 
-                <div class="filter-option">
-                    <label>
-                        <input type="checkbox" id="filter-experience">
-                        Experience Range Filter
+                <div class="title-synonyms">
+                    <label for="title-synonyms">
+                        Role Title Synonyms
+                        <i class="info-icon">ℹ</i>
+                        <span class="tooltip">Enter different ways to describe the same role. AI will match candidates based on semantic similarity.</span>
                     </label>
-                    <div class="filter-description">
-                        Filter candidates based on years of experience (uses the range defined in Step 1).
+                    <textarea id="title-synonyms" placeholder="Enter role titles and synonyms, one per line...&#10;Example:&#10;Software Engineer&#10;Developer&#10;Programmer&#10;Full Stack Developer"></textarea>
+                    <div class="synonym-actions">
+                        <button type="button" class="save-btn" onclick="app.saveTitleSynonyms()">Save Synonyms</button>
+                        <button type="button" class="clear-btn" onclick="app.clearTitleSynonyms()">Clear</button>
+                        <span class="saved-indicator" id="title-synonyms-saved" style="display: none; margin-left: 8px;">✓ Saved</span>
                     </div>
                 </div>
-
-                <div class="filter-option">
-                    <label>
-                        <input type="checkbox" id="filter-location">
-                        Location Filter
+                
+                <div class="similarity-settings">
+                    <label for="title-similarity-threshold">
+                        Title Similarity Threshold
+                        <i class="info-icon">ℹ</i>
+                        <span class="tooltip">Minimum similarity score (0-1) required for title matching. Higher values are more strict.</span>
                     </label>
-                    <div class="filter-description">
-                        Filter candidates based on geographic location preferences.
+                    <div class="threshold-slider">
+                        <input type="range" id="title-similarity-threshold" min="0" max="1" step="0.05" value="0.7" class="similarity-slider">
+                        <span class="threshold-value">0.70</span>
+                        <span class="saved-indicator" id="title-threshold-saved" style="display: none; margin-left: 8px;">✓ Saved</span>
                     </div>
-                </div>
-
-                <div class="filter-option">
-                    <label>
-                        <input type="checkbox" id="filter-industry">
-                        Industry Filter
-                    </label>
-                    <div class="filter-description">
-                        Filter candidates based on industry background (uses industries selected in Step 1).
-                    </div>
-                </div>
-
-                <div class="filter-option">
-                    <label>
-                        <input type="checkbox" id="filter-education">
-                        Education Filter
-                    </label>
-                    <div class="filter-description">
-                        Filter candidates based on educational background (uses institutions selected in Step 1).
+                    <div class="threshold-tip" style="color:#1976d2; font-size:0.97rem; margin-top:4px;">
+                        <b>Tip:</b> Lowering the threshold will include more candidates (less strict), while raising it will include only highly similar matches. If you get too few results, try lowering the threshold and re-filtering.
                     </div>
                 </div>
             </div>
 
-            <!-- Apply Filters -->
+            <!-- Essential Skills -->
             <div class="form-section">
-                <h3>Apply Advanced Filters</h3>
-                <div class="filter-controls">
-                    <button type="button" class="primary-btn" onclick="app.applyAdvancedFilters()">Apply Filters</button>
-                    <button type="button" class="secondary-btn" onclick="app.resetAdvancedFilters()">Reset Filters</button>
+                <h3>Essential Skills</h3>
+                <div class="skills-info">
+                    <p>AI will use embeddings to match required skills to profile text. One match above threshold is sufficient.</p>
+                </div>
+                
+                <div class="essential-skills">
+                    <label for="essential-skills">
+                        Required Skills
+                        <i class="info-icon">ℹ</i>
+                        <span class="tooltip">List essential skills that candidates must have. AI will check for semantic matches in profiles.</span>
+                    </label>
+                    <textarea id="essential-skills" placeholder="Enter essential skills, one per line...&#10;Example:&#10;JavaScript&#10;React&#10;Node.js&#10;Python&#10;Machine Learning"></textarea>
+                    <div class="skills-actions">
+                        <button type="button" class="save-btn" onclick="app.saveEssentialSkills()">Save Skills</button>
+                        <button type="button" class="clear-btn" onclick="app.clearEssentialSkills()">Clear</button>
+                        <span class="saved-indicator" id="essential-skills-saved" style="display: none; margin-left: 8px;">✓ Saved</span>
+                    </div>
+                </div>
+                
+                <div class="skills-settings">
+                    <label for="skills-similarity-threshold">
+                        Skills Similarity Threshold
+                        <i class="info-icon">ℹ</i>
+                        <span class="tooltip">Minimum similarity score (0-1) required for skills matching.</span>
+                    </label>
+                    <div class="threshold-slider">
+                        <input type="range" id="skills-similarity-threshold" min="0" max="1" step="0.05" value="0.6" class="similarity-slider">
+                        <span class="threshold-value">0.60</span>
+                        <span class="saved-indicator" id="skills-threshold-saved" style="display: none; margin-left: 8px;">✓ Saved</span>
+                    </div>
+                    <div class="threshold-tip" style="color:#1976d2; font-size:0.97rem; margin-top:4px;">
+                        <b>Tip:</b> Lowering the threshold will include more candidates with partial skill matches. If you get too few results, try lowering the threshold and re-filtering.
+                    </div>
                 </div>
             </div>
 
-            <!-- Advanced Filter Results -->
+            <!-- Company Context Inference -->
             <div class="form-section">
-                <h3>Filter Results</h3>
-                <div class="dashboard-stats">
+                <h3>Company Context Inference</h3>
+                <div class="context-info">
+                    <p>AI analyzes embedding context of past and current employers to infer dynamic environments, startup-like backgrounds, and advanced tech stacks.</p>
+                </div>
+                
+                <div class="context-settings">
+                    <label for="context-similarity-threshold">
+                        Context Similarity Threshold
+                        <i class="info-icon">ℹ</i>
+                        <span class="tooltip">Minimum similarity score for company context analysis. Higher values require stronger startup/tech signals.</span>
+                    </label>
+                    <div class="threshold-slider">
+                        <input type="range" id="context-similarity-threshold" min="0" max="1" step="0.05" value="0.5" class="similarity-slider">
+                        <span class="threshold-value">0.50</span>
+                        <span class="saved-indicator" id="context-threshold-saved" style="display: none; margin-left: 8px;">✓ Saved</span>
+                    </div>
+                    <div class="threshold-tip" style="color:#1976d2; font-size:0.97rem; margin-top:4px;">
+                        <b>Tip:</b> Lowering the threshold will include more candidates with broader company backgrounds. If you get too few results, try lowering the threshold and re-filtering.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Red Flags -->
+            <div class="form-section">
+                <h3>Red Flags</h3>
+                <div class="red-flags-info">
+                    <p>Select red flags that will disqualify candidates. Any selected flag will filter out the profile.</p>
+                </div>
+                
+                <div class="red-flags-selection">
+                    <div class="flags-grid">
+                        <label class="flag-option">
+                            <input type="checkbox" value="instability">
+                            <span class="flag-name">Instability</span>
+                            <span class="flag-desc">Frequent job changes or short tenures</span>
+                        </label>
+                        <label class="flag-option">
+                            <input type="checkbox" value="stagnation">
+                            <span class="flag-name">Stagnation</span>
+                            <span class="flag-desc">Long periods without career progression</span>
+                        </label>
+                        <label class="flag-option">
+                            <input type="checkbox" value="enterprise-only">
+                            <span class="flag-name">Enterprise-only</span>
+                            <span class="flag-desc">Only worked in large, slow-moving companies</span>
+                        </label>
+                        <label class="flag-option">
+                            <input type="checkbox" value="freelancer">
+                            <span class="flag-name">Freelancer</span>
+                            <span class="flag-desc">Primarily freelance or contract work</span>
+                        </label>
+                    </div>
+                    <div class="flags-actions">
+                        <button type="button" class="save-btn" onclick="app.saveRedFlags()">Save Red Flags</button>
+                        <button type="button" class="clear-btn" onclick="app.clearRedFlags()">Clear All</button>
+                        <span class="saved-indicator" id="red-flags-saved" style="display: none; margin-left: 8px;">✓ Saved</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Advanced Filter Execution -->
+            <div class="form-section">
+                <h3>Advanced Filter Execution</h3>
+                <div class="advanced-filter-controls">
+                    <button type="button" class="primary-btn" onclick="app.runAdvancedFiltering()">Run Advanced Filtering</button>
+                    <button type="button" class="secondary-btn" onclick="app.clearAdvancedDashboard()">Clear Dashboard</button>
+                </div>
+            </div>
+
+            <!-- Advanced Dashboard -->
+            <div class="form-section">
+                <h3>Advanced Filtering Dashboard</h3>
+                <div class="advanced-dashboard-stats">
                     <div class="stat-card">
-                        <div class="stat-number" id="pre-filter-count">0</div>
-                        <div class="stat-label">Before Filtering</div>
+                        <div class="stat-number" id="profiles-passed-count">0</div>
+                        <div class="stat-label">Profiles Passed</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-number" id="post-filter-count">0</div>
-                        <div class="stat-label">After Filtering</div>
+                        <div class="stat-number" id="profiles-skipped-count">0</div>
+                        <div class="stat-label">Profiles Skipped</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-number" id="advanced-filtered-count">0</div>
-                        <div class="stat-label">Filtered Out</div>
+                        <div class="stat-number" id="profiles-forwarded-count">0</div>
+                        <div class="stat-label">Forwarded to Ranking</div>
                     </div>
+                </div>
+                
+                <div class="advanced-filter-breakdown">
+                    <h4>Advanced Filter Breakdown</h4>
+                    <div class="breakdown-item">
+                        <span class="breakdown-label">Title Match Failed:</span>
+                        <span class="breakdown-count" id="title-match-failed-count">0</span>
+                    </div>
+                    <div class="breakdown-item">
+                        <span class="breakdown-label">Skills Match Failed:</span>
+                        <span class="breakdown-count" id="skills-match-failed-count">0</span>
+                    </div>
+                    <div class="breakdown-item">
+                        <span class="breakdown-label">Context Analysis Failed:</span>
+                        <span class="breakdown-count" id="context-failed-count">0</span>
+                    </div>
+                    <div class="breakdown-item">
+                        <span class="breakdown-label">Red Flags Detected:</span>
+                        <span class="breakdown-count" id="red-flags-count">0</span>
+                    </div>
+                </div>
+                <div style="margin-top: 18px;">
+                    <button type="button" class="primary-btn" id="re-filter-btn">Adjust & Re-Filter</button>
                 </div>
             </div>
         </div>
@@ -829,38 +962,42 @@
         <!-- Step 5: Ranking -->
         <div class="step-content" id="step-5" style="display: none;">
             <div class="step-header">
-                <h2>AI Ranking</h2>
+                <h2>Ranking</h2>
                 <p class="ai-explanation">
                     <i class="info-icon">ℹ</i>
-                    AI ranks candidates based on your criteria using advanced language models.
-                    <span class="tooltip">The AI analyzes each candidate's profile against your job requirements and ideal candidate profiles to generate rankings.</span>
+                    AI computes embeddings and uses GPT-4 mini-turbo to score borderline and top candidates.
+                    <span class="tooltip">AI will rank candidates using advanced models, combining embeddings and GPT for nuanced scoring. You can select the model and adjust the row range for processing.</span>
                 </p>
             </div>
 
-            <!-- Ranking Mode Selection -->
+            <!-- Model Selection -->
             <div class="form-section">
-                <h3>Ranking Mode</h3>
-                <div class="ranking-mode-selection">
-                    <label class="mode-option">
-                        <input type="radio" name="ranking-mode" value="embedding" checked>
-                        <span class="mode-title">Embedding Only</span>
-                        <span class="mode-description">Fast and cost-effective using semantic similarity</span>
+                <h3>Model Selection</h3>
+                <div class="model-selection-info">
+                    <p>Select the AI model to use for ranking. Hybrid is recommended for best results.</p>
+                </div>
+                <div class="model-options">
+                    <label class="radio-option">
+                        <input type="radio" name="ranking-model" value="hybrid" checked>
+                        <span>Hybrid (default)</span>
                     </label>
-                    <label class="mode-option">
-                        <input type="radio" name="ranking-mode" value="gpt">
-                        <span class="mode-title">GPT-4o</span>
-                        <span class="mode-description">High accuracy using advanced language model</span>
+                    <label class="radio-option">
+                        <input type="radio" name="ranking-model" value="embedding-small-3">
+                        <span>Embedding Small 3</span>
                     </label>
-                    <label class="mode-option">
-                        <input type="radio" name="ranking-mode" value="hybrid">
-                        <span class="mode-title">Hybrid (Recommended)</span>
-                        <span class="mode-description">Balanced approach combining both methods</span>
+                    <label class="radio-option">
+                        <input type="radio" name="ranking-model" value="gpt-4o">
+                        <span>GPT-4o (recommended)</span>
+                    </label>
+                    <label class="radio-option">
+                        <input type="radio" name="ranking-model" value="gpt-3.5-turbo">
+                        <span>GPT-3.5 turbo</span>
                     </label>
                 </div>
-                <div class="economy-mode" style="margin-top: 15px;">
-                    <label style="display: flex; align-items: center; gap: 8px;">
-                        <input type="checkbox" id="economy-mode" style="width: 16px; height: 16px;">
-                        <span style="font-weight: 500;">Economy Mode</span>
+                <div style="margin: 18px 0 0 0;">
+                    <label style="display: flex; align-items: center; gap: 10px; font-weight: 600;">
+                        <input type="checkbox" id="economy-mode-toggle">
+                        <span>Economy Mode</span>
                     </label>
                     <div class="economy-mode-explanation">
                         In this mode, borderline candidates (embedding score 0.6–0.8) are analyzed using <b>GPT-3.5-turbo</b> (cost-effective), while top candidates (embedding ≥ 0.8) are analyzed using <b>GPT-4o</b> (high accuracy).
@@ -1041,5 +1178,4 @@
     <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
     <script src="app.js" defer></script>
   </body>
-</html>
-
+</html> 
