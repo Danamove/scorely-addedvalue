@@ -1,0 +1,13 @@
+{
+  "name": "scorely-addedvalue",
+  "version": "1.0.0",
+  "description": "AI-Powered LinkedIn Profile Ranking",
+  "main": "ScorelyMVP.js",
+  "scripts": {},
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "openai": "^4.0.0"
+  }
+} 
