@@ -1,2615 +1,1705 @@
-// Scorely App - Main JavaScript
-class ScorelyApp {
-    constructor() {
-        this.currentStep = 1;
-        this.totalSteps = 6;
-        this.appData = this.loadAppData();
-        
-        this.init();
-    }
+const appContainer = document.getElementById('app-container');
 
-    init() {
-        this.setupEventListeners();
-        this.loadSavedData();
-        this.updateProgressBar();
-        this.setupTooltips();
-        this.setupCharacterCounters();
-        this.setupWeightSliders();
-        this.setupTraits();
-        this.setupMultiSelect();
-        this.updateRowRangeIndicators();
-    }
+// Load API key from localStorage if available
+const savedApiKey = localStorage.getItem('scorely_api_key');
 
-    // Data Management
-    loadAppData() {
-        const saved = localStorage.getItem('scorely_app_data');
-        return saved ? JSON.parse(saved) : {
-            jobDescription: '',
-            idealProfiles: [],
-            targetCompanies: '',
-            experienceRange: { min: 0, max: 10 },
-            industry: [],
-            education: [],
-            customTraits: [],
-            hotSignals: '',
-            rankingWeights: {
-                techFit: 30,
-                experience: 25,
-                customTraitsWeight: 20,
-                startupFit: 15,
-                education: 10
+const state = {
+    currentStep: 1,
+    fileHeaders: null, // Will hold headers from user's file
+    columnMapping: {}, // Will store user's mapping
+    uploadedFile: null, // To hold the actual file object
+    profileData: [],
+    filteredResults: {
+        initialCount: 0,
+        rejectedCount: 0,
+        remainingCount: 0,
+        rejectedProfiles: []
+    },
+    filters: {
+        hotSignals: '',
+        blacklist: '',
+        pastCandidates: '',
+        redFlags: {
+            preset: [],
+            custom: ''
+        }
+    },
+    rankingCriteria: {
+        minExperience: 0,
+        requiredSkills: {
+            and: '',
+            or: ''
+        },
+        universities: {
+            selected: [],
+            noAcademicMatch: false
+        },
+        militaryRelevance: false,
+        academicExcellence: false,
+        hasPublications: false,
+        isSpeaker: false,
+        idealProfiles: ['', '', '', ''], // Four separate profile slots
+        customTraits: [{ name: '', description: '' }], // Start with one empty trait
+        weights: {
+            experience: 50,
+            skills: 50,
+            universities: 50,
+            customTraits: 50,
+            idealProfiles: 50
+        }
+    },
+    rankingProcess: {
+        model: 'Embedding small 3 + GPT 3.5 turbo + GPT 4.5 mini',
+        rangeStart: 2,
+        rangeEnd: 10,
+        status: 'idle', // idle, ranking, paused, stopped, complete
+        profilesToRank: [],
+        rankedProfiles: [],
+        progress: {
+            current: 0,
+            total: 0,
+            startTime: null,
+            estimatedTime: null
+        },
+        activeFilter: 'Top', // Can be 'Top', 'Good', 'Hidden Gems', etc.
+        searchQuery: '',
+        globalFeedback: '',
+        apiKey: savedApiKey || '' // Load from localStorage
+    }
+};
+
+function renderHeader() {
+    const header = document.createElement('div');
+    header.className = 'wizard-header';
+    const steps = [
+        { number: 1, title: 'Data & Mapping' },
+        { number: 2, title: 'Filters & Signals' },
+        { number: 3, title: 'Ranking Criteria' },
+        { number: 4, title: 'Review & Rank' },
+    ];
+
+    header.innerHTML = steps.map(step => `
+        <div class="wizard-step ${state.currentStep >= step.number ? 'active' : ''}" data-step="${step.number}">
+            <div class="step-number">${step.number}</div>
+            <div class="step-title">${step.title}</div>
+        </div>
+    `).join('<div class="wizard-connector"></div>');
+
+    header.querySelectorAll('.wizard-step').forEach(stepEl => {
+        stepEl.addEventListener('click', () => {
+            const stepNumber = parseInt(stepEl.dataset.step, 10);
+            if (stepNumber === 1) { // Reset if going back to data upload
+                state.fileHeaders = null;
+                state.uploadedFile = null;
             }
+            state.currentStep = stepNumber;
+            render(true);
+        });
+    });
+    return header;
+}
+
+function getStepContent() {
+    switch (state.currentStep) {
+        case 1: return renderStep1_DataAndMapping();
+        case 2: return renderStep2_Filters();
+        case 3: return renderStep3_RankingCriteria();
+        case 4: return renderStep4_ReviewAndRank();
+        default:
+            const div = document.createElement('div');
+            div.textContent = 'Step not found';
+            return div;
+    }
+}
+
+function render(shouldScrollToTop = false) {
+    appContainer.innerHTML = '';
+    appContainer.appendChild(renderHeader());
+    appContainer.appendChild(getStepContent());
+    if (shouldScrollToTop) {
+        window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+}
+
+function renderStep1_DataAndMapping() {
+    const wrapper = document.createElement('div');
+    let step1HTML;
+
+    if (!state.fileHeaders) {
+        step1HTML = `
+            <div class="step-container" id="step-1-input">
+                <h2>Step 1: Input Candidate Data</h2>
+                <p>Accepts CSV, Excel or pasted LinkedIn data.</p>
+                
+                <div class="input-options">
+                    <textarea id="pasted-data" placeholder="Or paste data here..."></textarea>
+                    <div class="file-upload-container">
+                         <label for="file-upload" class="file-upload-button">Upload CSV/Excel</label>
+                         <input type="file" id="file-upload" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" />
+                         <span id="file-name"></span>
+                    </div>
+                </div>
+                 <div class="navigation-buttons">
+                    <button id="process-data-btn" class="btn-primary">Map Columns</button>
+                </div>
+            </div>
+        `;
+    } else {
+        const mappingFields = {
+            firstName: { label: 'First Name', required: true },
+            lastName: { label: 'Last Name', required: true },
+            company: { label: 'Current Company', required: true },
+            title: { label: 'Job Title', required: true },
+            linkedinUrl: { label: 'LinkedIn Profile URL', required: true, hint: 'e.g., your "ProfileURL" column' },
+            mutualConnections: { label: 'Mutual Connections URL', required: false, hint: 'e.g., your "mutualConnectionsURL" column' }
         };
+
+        const options = state.fileHeaders.map(header => `<option value="${header}">${header}</option>`).join('');
+
+        step1HTML = `
+            <div class="step-container" id="step-1-mapping">
+                <h2>Step 1.2: Map Columns</h2>
+                <p>Match your sheet's columns to the required fields. This helps the AI understand your data.</p>
+                
+                <div class="column-mapping-container">
+                    ${Object.entries(mappingFields).map(([key, field]) => `
+                        <div class="mapping-row">
+                            <label for="map-${key}" class="mapping-label">
+                                ${field.label} 
+                                ${!field.required ? '<span class="optional-label">(Optional)</span>' : ''}
+                            </label>
+                            <div class="mapping-input-wrapper">
+                                <select id="map-${key}" data-key="${key}" class="mapping-select">
+                                    <option value="">Select a column...</option>
+                                    ${options}
+                                </select>
+                                ${field.hint ? `<small class="mapping-hint">${field.hint}</small>` : ''}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+
+                <div class="profile-summary-note">
+                    <p><strong>Next Step:</strong> All columns for each candidate will be combined into a single "Profile Summary" for AI analysis.</p>
+                </div>
+
+                <div class="navigation-buttons">
+                    <button id="back-to-upload" class="btn-secondary">Back</button>
+                    <button id="save-mapping-btn" class="btn-save">Save Mapping <span id="save-confirmation-mapping" class="save-confirmation"></span></button>
+                    <button id="next-step-1" class="btn-primary">Continue to Filters →</button>
+                </div>
+            </div>
+        `;
     }
 
-    saveAppData() {
-        localStorage.setItem('scorely_app_data', JSON.stringify(this.appData));
-    }
+    wrapper.innerHTML = step1HTML;
 
-    // Event Listeners
-    setupEventListeners() {
-        // Navigation
-        document.querySelector('.next-btn').addEventListener('click', () => this.nextStep());
-        document.querySelector('.prev-btn').addEventListener('click', () => this.prevStep());
-
-        // Save buttons
-        document.querySelectorAll('.save-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => this.saveField(e.target.dataset.field));
+    // Add event listeners
+    if (!state.fileHeaders) {
+        wrapper.querySelector('#file-upload').addEventListener('change', handleFileSelect);
+        wrapper.querySelector('#process-data-btn').addEventListener('click', processData);
+    } else {
+        wrapper.querySelector('#back-to-upload').addEventListener('click', () => {
+            state.fileHeaders = null;
+            render(true);
         });
+        wrapper.querySelector('#save-mapping-btn').addEventListener('click', saveMapping);
+        wrapper.querySelector('#next-step-1').addEventListener('click', () => {
+            // Future: Check if required fields are mapped before continuing
+            state.currentStep = 2;
+            render(true);
+        });
+    }
+    return wrapper;
+}
 
-        // File uploads
-        this.setupFileUploads();
+function handleFileSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    state.uploadedFile = file;
+    const fileName = file.name;
+    document.getElementById('file-name').textContent = fileName;
+}
 
-        // Form inputs
-        this.setupFormInputs();
+function processData() {
+    if (!state.uploadedFile && !document.getElementById('pasted-data').value) {
+        alert('Please select a file or paste data first.');
+        return;
+    }
 
-        // API Key save
-        const apiKeyInput = document.getElementById('api-key');
-        const saveApiKeyBtn = document.getElementById('save-api-key-btn');
-        const apiKeySaved = document.getElementById('api-key-saved');
-        if (saveApiKeyBtn) {
-            saveApiKeyBtn.addEventListener('click', () => {
-                const key = apiKeyInput.value.trim();
-                localStorage.setItem('scorely_api_key', key);
-                apiKeySaved.style.display = 'inline';
-                apiKeySaved.classList.add('show');
-                setTimeout(() => {
-                    apiKeySaved.classList.remove('show');
-                    setTimeout(() => {
-                        apiKeySaved.style.display = 'none';
-                    }, 300);
-                }, 2000);
-            });
-        }
-        // Load API Key on init
-        const storedKey = localStorage.getItem('scorely_api_key');
-        if (storedKey && apiKeyInput) {
-            apiKeyInput.value = storedKey;
-        }
-        // Restart button
-        const restartBtn = document.getElementById('restart-btn');
-        if (restartBtn) {
-            restartBtn.addEventListener('click', () => {
-                if (confirm('Are you sure you want to restart and clear all data?')) {
-                    localStorage.clear();
-                    location.reload();
-                }
-            });
-        }
-
-        // Row range inputs
-        const startRowInput = document.getElementById('start-row');
-        const endRowInput = document.getElementById('end-row');
-        if (startRowInput) {
-            startRowInput.addEventListener('input', () => this.updateRowRangeIndicators());
-        }
-        if (endRowInput) {
-            endRowInput.addEventListener('input', () => this.updateRowRangeIndicators());
-        }
-
-        // LinkedIn profile text save for ideal profiles
-        document.querySelectorAll('.profile-slot').forEach((slot, index) => {
-            const textarea = slot.querySelector('.linkedin-profile-textarea');
-            const saveBtn = slot.querySelector('.linkedin-save-btn');
-            const savedIndicator = slot.querySelector('.linkedin-saved-indicator');
-            if (saveBtn && textarea) {
-                saveBtn.addEventListener('click', () => {
-                    const text = textarea.value.trim();
-                    if (!this.appData.idealProfiles) this.appData.idealProfiles = [];
-                    if (!this.appData.idealProfiles[index]) this.appData.idealProfiles[index] = {};
-                    this.appData.idealProfiles[index].text = text;
-                    this.saveAppData();
-                    savedIndicator.style.display = 'inline';
-                    savedIndicator.classList.add('show');
-                    setTimeout(() => {
-                        savedIndicator.classList.remove('show');
-                        setTimeout(() => {
-                            savedIndicator.style.display = 'none';
-                        }, 300);
-                    }, 2000);
-                    // Update label color if text present
-                    const label = slot.querySelector('label');
-                    if (text) {
-                        label.textContent = `Profile ${index + 1}: Pasted Text`;
-                        label.style.color = '#2196F3';
-                    } else {
-                        label.textContent = `Profile ${index + 1}`;
-                        label.style.color = '#333';
-                    }
+    const handleComplete = (results) => {
+        if (results.data && results.data.length > 0) {
+            state.fileHeaders = results.data[0];
+            state.profileData = results.data.slice(1).map(row => {
+                const profile = {};
+                state.fileHeaders.forEach((header, i) => {
+                    profile[header] = row[i];
                 });
-            }
-        });
-        // On load, populate textarea if text exists
-        if (this.appData.idealProfiles) {
-            document.querySelectorAll('.profile-slot').forEach((slot, index) => {
-                const textarea = slot.querySelector('.linkedin-profile-textarea');
-                const label = slot.querySelector('label');
-                const profile = this.appData.idealProfiles[index];
-                if (profile && profile.text && textarea) {
-                    textarea.value = profile.text;
-                    label.textContent = `Profile ${index + 1}: Pasted Text`;
-                    label.style.color = '#2196F3';
-                }
+                return profile;
             });
-        }
-    }
-
-    setupFileUploads() {
-        // Job Description file upload
-        const jdFile = document.getElementById('jd-file');
-        const jdTextarea = document.getElementById('job-description');
-        
-        jdFile.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                this.readFileAsText(file).then(text => {
-                    jdTextarea.value = text.substring(0, 500);
-                    this.updateCharacterCounter(jdTextarea);
-                    this.saveField('job-description');
-                });
-            }
-        });
-
-        // Target Companies file upload
-        const companiesFile = document.getElementById('companies-file');
-        companiesFile.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                this.readFileAsText(file).then(text => {
-                    document.getElementById('target-companies').value = text;
-                    this.saveField('target-companies');
-                });
-            }
-        });
-
-        // Hot Signals file upload
-        const signalsFile = document.getElementById('signals-file');
-        signalsFile.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                this.readFileAsText(file).then(text => {
-                    document.getElementById('hot-signals').value = text;
-                    this.saveField('hot-signals');
-                });
-            }
-        });
-
-        // Ideal Profiles uploads
-        document.querySelectorAll('.profile-slot input[type="file"]').forEach((input, index) => {
-            input.addEventListener('change', (e) => {
-                const file = e.target.files[0];
-                if (file) {
-                    this.handleIdealProfileUpload(file, index);
-                }
-            });
-        });
-    }
-
-    setupFormInputs() {
-        // Experience range inputs
-        const minExp = document.getElementById('min-experience');
-        const maxExp = document.getElementById('max-experience');
-        
-        minExp.addEventListener('change', () => this.saveField('experience-range'));
-        maxExp.addEventListener('change', () => this.saveField('experience-range'));
-
-        // Custom industry input
-        const customIndustryInput = document.getElementById('custom-industry');
-        const addIndustryBtn = customIndustryInput.nextElementSibling;
-        addIndustryBtn.addEventListener('click', () => this.addCustomIndustry());
-
-        // Custom education input
-        const customEducationInput = document.getElementById('custom-education');
-        const addEducationBtn = customEducationInput.nextElementSibling;
-        addEducationBtn.addEventListener('click', () => this.addCustomEducation());
-    }
-
-    // File Reading
-    readFileAsText(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = (e) => resolve(e.target.result);
-            reader.onerror = reject;
-            reader.readAsText(file);
-        });
-    }
-
-    handleIdealProfileUpload(file, index) {
-        this.readFileAsText(file).then(text => {
-            if (!this.appData.idealProfiles) {
-                this.appData.idealProfiles = [];
-            }
-            this.appData.idealProfiles[index] = {
-                name: file.name,
-                content: text.substring(0, 1000) // Limit content
-            };
-            this.saveAppData();
-            this.showSavedIndicator('ideal-profiles');
-            
-            // Update UI to show uploaded file
-            const profileSlot = document.querySelectorAll('.profile-slot')[index];
-            const label = profileSlot.querySelector('label');
-            label.textContent = `Profile ${index + 1}: ${file.name}`;
-            label.style.color = '#8BC34A';
-        });
-    }
-
-    // Character Counters
-    setupCharacterCounters() {
-        const jdTextarea = document.getElementById('job-description');
-        jdTextarea.addEventListener('input', () => this.updateCharacterCounter(jdTextarea));
-        this.updateCharacterCounter(jdTextarea);
-    }
-
-    updateCharacterCounter(textarea) {
-        const counter = textarea.parentElement.querySelector('.char-counter');
-        if (counter) {
-            const count = textarea.value.length;
-            counter.textContent = `${count}/500`;
-            
-            if (count > 450) {
-                counter.style.color = '#EC407A';
-            } else if (count > 400) {
-                counter.style.color = '#FF9800';
-            } else {
-                counter.style.color = '#666';
-            }
-        }
-    }
-
-    // Weight Sliders
-    setupWeightSliders() {
-        const sliders = document.querySelectorAll('.weight-slider');
-        sliders.forEach(slider => {
-            const valueDisplay = slider.parentElement.querySelector('.slider-value');
-            
-            slider.addEventListener('input', () => {
-                valueDisplay.textContent = `${slider.value}%`;
-            });
-            
-            slider.addEventListener('change', () => {
-                this.saveField('ranking-weights');
-            });
-        });
-    }
-
-    // Traits Management
-    setupTraits() {
-        const addTraitBtn = document.querySelector('.add-trait-btn');
-        const traitInput = document.getElementById('trait-input');
-        
-        addTraitBtn.addEventListener('click', () => this.addTrait());
-        traitInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                this.addTrait();
-            }
-        });
-    }
-
-    addTrait() {
-        const traitInput = document.getElementById('trait-input');
-        const trait = traitInput.value.trim();
-        
-        if (trait && !this.appData.customTraits.includes(trait)) {
-            this.appData.customTraits.push(trait);
-            this.saveAppData();
-            this.renderTraits();
-            this.showSavedIndicator('custom-traits');
-            traitInput.value = '';
-        }
-    }
-
-    removeTrait(trait) {
-        this.appData.customTraits = this.appData.customTraits.filter(t => t !== trait);
-        this.saveAppData();
-        this.renderTraits();
-        this.showSavedIndicator('custom-traits');
-    }
-
-    renderTraits() {
-        const traitsList = document.getElementById('traits-list');
-        traitsList.innerHTML = '';
-        
-        this.appData.customTraits.forEach(trait => {
-            const traitTag = document.createElement('div');
-            traitTag.className = 'trait-tag';
-            traitTag.innerHTML = `
-                ${trait}
-                <button class="remove-trait" onclick="app.removeTrait('${trait}')">&times;</button>
-            `;
-            traitsList.appendChild(traitTag);
-        });
-    }
-
-    // Multi Select
-    setupMultiSelect() {
-        // Industry select all/clear
-        const industrySelect = document.getElementById('industry-select');
-        if (industrySelect) {
-            const selectAllBtn = industrySelect.querySelector('.select-all-btn');
-            const clearAllBtn = industrySelect.querySelector('.clear-all-btn');
-            if (selectAllBtn) selectAllBtn.addEventListener('click', () => this.selectAll('industry'));
-            if (clearAllBtn) clearAllBtn.addEventListener('click', () => this.clearAll('industry'));
-        }
-        // Education select all/clear
-        const educationSelect = document.getElementById('education-select');
-        if (educationSelect) {
-            const eduSelectAllBtn = educationSelect.querySelector('.select-all-btn');
-            const eduClearAllBtn = educationSelect.querySelector('.clear-all-btn');
-            if (eduSelectAllBtn) eduSelectAllBtn.addEventListener('click', () => this.selectAll('education'));
-            if (eduClearAllBtn) eduClearAllBtn.addEventListener('click', () => this.clearAll('education'));
-        }
-        // Checkbox change events
-        document.querySelectorAll('.checkbox-option input[type="checkbox"]').forEach(checkbox => {
-            checkbox.addEventListener('change', () => {
-                const multiSelect = checkbox.closest('.multi-select');
-                if (!multiSelect) return;
-                const field = multiSelect.id.replace('-select', '');
-                this.saveField(field);
-            });
-        });
-    }
-
-    selectAll(field) {
-        const container = document.getElementById(`${field}-select`);
-        const checkboxes = container.querySelectorAll('.select-options input[type="checkbox"]');
-        checkboxes.forEach(cb => {
-            cb.checked = true;
-            cb.dispatchEvent(new Event('change'));
-        });
-        this.saveField(field);
-    }
-
-    clearAll(field) {
-        const container = document.getElementById(`${field}-select`);
-        const checkboxes = container.querySelectorAll('.select-options input[type="checkbox"]');
-        checkboxes.forEach(cb => {
-            cb.checked = false;
-            cb.dispatchEvent(new Event('change'));
-        });
-        this.saveField(field);
-    }
-
-    addCustomIndustry() {
-        const input = document.getElementById('custom-industry');
-        const industry = input.value.trim();
-        
-        if (industry) {
-            // Add as a custom checkbox option
-            const optionsContainer = document.getElementById('industry-select').querySelector('.select-options');
-            const newOption = document.createElement('label');
-            newOption.className = 'checkbox-option';
-            newOption.innerHTML = `
-                <input type="checkbox" value="custom-${industry.toLowerCase().replace(/\s+/g, '-')}">
-                <span>${industry}</span>
-            `;
-            optionsContainer.appendChild(newOption);
-            
-            input.value = '';
-            this.saveField('industry');
-        }
-    }
-
-    addCustomEducation() {
-        const input = document.getElementById('custom-education');
-        const education = input.value.trim();
-        
-        if (education) {
-            // Add as a custom checkbox option
-            const optionsContainer = document.getElementById('education-select').querySelector('.select-options');
-            const newOption = document.createElement('label');
-            newOption.className = 'checkbox-option';
-            newOption.innerHTML = `
-                <input type="checkbox" value="custom-${education.toLowerCase().replace(/\s+/g, '-')}">
-                <span>${education}</span>
-            `;
-            optionsContainer.appendChild(newOption);
-            
-            input.value = '';
-            this.saveField('education');
-        }
-    }
-
-    // Save Field
-    saveField(fieldName) {
-        switch (fieldName) {
-            case 'job-description':
-                this.appData.jobDescription = document.getElementById('job-description').value;
-                break;
-            case 'target-companies':
-                this.appData.targetCompanies = document.getElementById('target-companies').value;
-                break;
-            case 'experience-range':
-                this.appData.experienceRange = {
-                    min: parseInt(document.getElementById('min-experience').value) || 0,
-                    max: parseInt(document.getElementById('max-experience').value) || 10
-                };
-                break;
-            case 'industry':
-                this.appData.industry = this.getSelectedValues('industry-select');
-                break;
-            case 'education':
-                this.appData.education = this.getSelectedValues('education-select');
-                break;
-            case 'hot-signals':
-                this.appData.hotSignals = document.getElementById('hot-signals').value;
-                break;
-            case 'ranking-weights':
-                this.appData.rankingWeights = {
-                    techFit: parseInt(document.getElementById('tech-fit').value),
-                    experience: parseInt(document.getElementById('experience').value),
-                    customTraitsWeight: parseInt(document.getElementById('custom-traits-weight').value),
-                    startupFit: parseInt(document.getElementById('startup-fit').value),
-                    education: parseInt(document.getElementById('education-weight').value)
-                };
-                break;
-        }
-        
-        this.saveAppData();
-        this.showSavedIndicator(fieldName);
-    }
-
-    getSelectedValues(containerId) {
-        const container = document.getElementById(containerId);
-        const checkboxes = container.querySelectorAll('input[type="checkbox"]:checked');
-        return Array.from(checkboxes).map(cb => cb.value);
-    }
-
-    // Load Saved Data
-    loadSavedData() {
-        // Job Description
-        if (this.appData.jobDescription) {
-            document.getElementById('job-description').value = this.appData.jobDescription;
-            this.updateCharacterCounter(document.getElementById('job-description'));
-        }
-
-        // Target Companies
-        if (this.appData.targetCompanies) {
-            document.getElementById('target-companies').value = this.appData.targetCompanies;
-        }
-
-        // Experience Range
-        if (this.appData.experienceRange) {
-            document.getElementById('min-experience').value = this.appData.experienceRange.min;
-            document.getElementById('max-experience').value = this.appData.experienceRange.max;
-        }
-
-        // Industry
-        if (this.appData.industry) {
-            this.setSelectedValues('industry-select', this.appData.industry);
-        }
-
-        // Education
-        if (this.appData.education) {
-            this.setSelectedValues('education-select', this.appData.education);
-        }
-
-        // Custom Traits
-        if (this.appData.customTraits) {
-            this.renderTraits();
-        }
-
-        // Hot Signals
-        if (this.appData.hotSignals) {
-            document.getElementById('hot-signals').value = this.appData.hotSignals;
-        }
-
-        // Ranking Weights
-        if (this.appData.rankingWeights) {
-            document.getElementById('tech-fit').value = this.appData.rankingWeights.techFit;
-            document.getElementById('experience').value = this.appData.rankingWeights.experience;
-            document.getElementById('custom-traits-weight').value = this.appData.rankingWeights.customTraitsWeight;
-            document.getElementById('startup-fit').value = this.appData.rankingWeights.startupFit;
-            document.getElementById('education-weight').value = this.appData.rankingWeights.education;
-            
-            // Update slider displays
-            document.querySelectorAll('.weight-slider').forEach(slider => {
-                const valueDisplay = slider.parentElement.querySelector('.slider-value');
-                valueDisplay.textContent = `${slider.value}%`;
-            });
-        }
-
-        // Ideal Profiles
-        if (this.appData.idealProfiles) {
-            this.appData.idealProfiles.forEach((profile, index) => {
-                if (profile) {
-                    const profileSlot = document.querySelectorAll('.profile-slot')[index];
-                    const label = profileSlot.querySelector('label');
-                    label.textContent = `Profile ${index + 1}: ${profile.name}`;
-                    label.style.color = '#8BC34A';
-                }
-            });
-        }
-    }
-
-    setSelectedValues(containerId, values) {
-        const container = document.getElementById(containerId);
-        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-        checkboxes.forEach(cb => {
-            cb.checked = values.includes(cb.value);
-        });
-    }
-
-    // Saved Indicator
-    showSavedIndicator(fieldName) {
-        let indicator = null;
-        // Support new explicit IDs for Step 4
-        if (fieldName === 'title-synonyms') {
-            indicator = document.getElementById('title-synonyms-saved');
-        } else if (fieldName === 'essential-skills') {
-            indicator = document.getElementById('essential-skills-saved');
-        } else if (fieldName === 'red-flags') {
-            indicator = document.getElementById('red-flags-saved');
-        } else if (fieldName === 'column-mapping') {
-            // Special handling for column mapping
-            const saveBtn = document.querySelector('[data-field="column-mapping"]');
-            if (saveBtn) {
-                indicator = saveBtn.nextElementSibling;
-            }
+            state.filteredResults.initialCount = state.profileData.length;
+            state.filteredResults.remainingCount = state.profileData.length;
+            render(true); // Re-render to show the mapping UI
         } else {
-            let saveBtn = document.querySelector(`[data-field="${fieldName}"]`);
-            indicator = saveBtn ? saveBtn.nextElementSibling : null;
-            if (!indicator || !indicator.classList.contains('saved-indicator')) {
-                indicator = document.querySelector(`[data-field="${fieldName}"] ~ .saved-indicator`);
+            alert('Could not read data from the file. Is it empty?');
+        }
+    };
+
+    if (state.uploadedFile) {
+        Papa.parse(state.uploadedFile, {
+            header: false,
+            skipEmptyLines: true,
+            complete: handleComplete,
+            error: (error) => {
+                alert('An error occurred while parsing the file.');
+                console.error(error);
+            }
+        });
+    } else {
+         // Handle pasted data
+         const pastedText = document.getElementById('pasted-data').value;
+         Papa.parse(pastedText, {
+            header: false,
+            skipEmptyLines: true,
+            complete: handleComplete,
+            error: (error) => {
+                alert('An error occurred while parsing pasted data.');
+                console.error(error);
+            }
+        });
+    }
+}
+
+function saveMapping() {
+    const selects = document.querySelectorAll('.mapping-select');
+    selects.forEach(select => {
+        const key = select.dataset.key;
+        const value = select.value;
+        if (key) {
+            state.columnMapping[key] = value;
+        }
+    });
+
+    // Use the standardized confirmation function
+    showSaveConfirmation('save-confirmation-mapping');
+
+    // After saving mapping, generate profile summaries
+    generateProfileSummaries();
+    console.log('Saved Mapping and Generated Summaries:', state.columnMapping);
+}
+
+function generateProfileSummaries() {
+    if (!state.profileData || state.profileData.length === 0) return;
+
+    state.profileData.forEach(profile => {
+        let summary = '';
+        for (const key in profile) {
+            summary += `${key}: ${profile[key]}\n`;
+        }
+        profile.profileSummary = summary;
+    });
+}
+
+function renderStep2_Filters() {
+    const wrapper = document.createElement('div');
+    const noGoCompanies = [
+        "Isracard", "Matrix", "Harel Insurance & Finance", "Ness Technologies", "Bank Leumi", 
+        "GAV Systems", "Amdocs", "Log-On Software", "Sapiens", "Aman Group", "NICE", 
+        "Maccabi Healthcare Services", "Zap Group", "Clalit Health Services", "Bank Hapoalim", 
+        "Israel Tax Authority", "Discount Bank", "Infanity Labs", "Experis Israel", 
+        "Sapiens International", "Magic Software Enterprises", "Ethernity Networks", 
+        "Elad Software Systems", "Mizrahi-Tefahot Bank", "Migdal Insurance", "Menora Mivtachim", 
+        "Clal Insurance", "Taldor", "Bynet Data Communications", "Hachshara Insurance Company", 
+        "Psagot Investment House", "Max It Finance", "bizi"
+    ];
+
+    const hasData = state.profileData.length > 0;
+    const { initialCount, rejectedCount, remainingCount } = state.filteredResults;
+
+    const step2HTML = `
+        <div class="step-container" id="step-2">
+            <div class="step-header">
+                <h2>Filters & Signals</h2>
+            </div>
+            
+            <div class="filter-section">
+                <h3>HOT SIGNALS Companies</h3>
+                <p class="description">
+                    <span class="icon">🔥</span>
+                    <strong>Companies with Layoffs, Closures, or Instability</strong>
+                    <br>
+                    Add companies known for recent layoffs, closures, or financial instability. Profiles from these companies will be marked as "HOT" opportunities.
+                </p>
+                <textarea id="hot-signals-companies" placeholder="Riskified\nD-ID\nActivefence\n...">${state.filters.hotSignals}</textarea>
+                <div class="button-group">
+                    <button class="btn-secondary"><span class="icon-upload">↑</span> Upload File</button>
+                    <button id="save-hot-signals" class="btn-save">Save <span id="save-confirmation-hot-signals" class="save-confirmation"></span></button>
+                </div>
+            </div>
+
+            <div class="filter-section">
+                <h3><span class="icon">🚫</span> Blacklisted Companies</h3>
+                <p class="description">Add companies whose candidates should always be excluded.</p>
+                <textarea id="blacklist-companies" placeholder="Enter company names, one per line...">${state.filters.blacklist}</textarea>
+                <div class="button-group">
+                    <button class="btn-secondary"><span class="icon-upload">↑</span> Upload File</button>
+                    <button id="save-blacklist" class="btn-save">Save <span id="save-confirmation-blacklist" class="save-confirmation"></span></button>
+                </div>
+            </div>
+
+            <div class="filter-section">
+                <h3><span class="icon">🔄</span> Past Candidates</h3>
+                <p class="description">Add candidates who have already been contacted or processed to avoid duplicates.</p>
+                <textarea id="past-candidates" placeholder="Paste candidate LinkedIn URLs or names, one per line...">${state.filters.pastCandidates}</textarea>
+                <div class="button-group">
+                    <button class="btn-secondary"><span class="icon-upload">↑</span> Upload File</button>
+                    <button id="save-past-candidates" class="btn-save">Save <span id="save-confirmation-past-candidates" class="save-confirmation"></span></button>
+                </div>
+            </div>
+
+            <div class="filter-section">
+                <h3><span class="icon">⛔</span> No-Go Companies (Preset)</h3>
+                <p class="description">This is a default filter of companies that are always excluded. This list cannot be modified.</p>
+                <select id="no-go-companies" multiple disabled>${noGoCompanies.map(company => `<option>${company}</option>`).join('')}</select>
+            </div>
+
+            <div class="filter-section">
+                <h3><span class="icon">🚩</span> Red Flags</h3>
+                <p class="description">Define rules to automatically filter out candidates.</p>
+                <div class="red-flags-list">
+                    <label><input type="checkbox" name="red_flag" value="enterprise_only" ${state.filters.redFlags.preset.includes('enterprise_only') ? 'checked' : ''}> Enterprise-only experience</label>
+                    <label><input type="checkbox" name="red_flag" value="freelance_consultant" ${state.filters.redFlags.preset.includes('freelance_consultant') ? 'checked' : ''}> Freelance/consultant roles</label>
+                    <label><input type="checkbox" name="red_flag" value="grad_before_2000" ${state.filters.redFlags.preset.includes('grad_before_2000') ? 'checked' : ''}> Graduation year before 2000</label>
+                    <label><input type="checkbox" name="red_flag" value="job_hopping" ${state.filters.redFlags.preset.includes('job_hopping') ? 'checked' : ''}> Lack of stability (frequent job changes, <2 years)</label>
+                </div>
+                <textarea id="custom-red-flags" placeholder="Add custom red flags, one per line...">${state.filters.redFlags.custom}</textarea>
+                 <div class="button-group">
+                    <button id="save-red-flags" class="btn-save">Save Flags <span id="save-confirmation-red-flags" class="save-confirmation"></span></button>
+                </div>
+            </div>
+
+            <div class="filter-dashboard ${!hasData ? 'disabled' : ''}">
+                <h3>Filtering Dashboard</h3>
+                ${!hasData ? '<p class="description">Upload data in Step 1 to enable filtering.</p>' : ''}
+                <div class="stats-container">
+                    <div class="stat-item"><span>${hasData ? initialCount : '-'}</span> Initial Profiles</div>
+                    <div class="stat-item rejected"><span>${hasData ? rejectedCount : '-'}</span> Rejected</div>
+                    <div class="stat-item remaining"><span>${hasData ? remainingCount : '-'}</span> Remaining</div>
+                </div>
+                <div class="button-group">
+                    <button id="run-filter-btn" class="btn-primary" ${!hasData ? 'disabled' : ''}>Run Filter</button>
+                    <button id="reset-filter-btn" class="btn-secondary" ${!hasData ? 'disabled' : ''}>Reset</button>
+                    <button id="view-rejected-btn" class="btn-link" ${!hasData || rejectedCount === 0 ? 'disabled' : ''}>View Rejected Profiles</button>
+                </div>
+                <div id="rejected-profiles-view" class="hidden">
+                    <h4>Rejected Profiles</h4>
+                    <div id="rejected-list"></div>
+                </div>
+            </div>
+
+            <div class="navigation-buttons">
+                <button id="back-step-2" class="btn-secondary">← Back</button>
+                <button id="next-step-2" class="btn-primary">Continue to Ranking Criteria →</button>
+            </div>
+        </div>
+    `;
+    wrapper.innerHTML = step2HTML.replace('<!-- ... HOT SIGNALS ... -->', `
+        <h3>HOT SIGNALS Companies</h3>
+        <p class="description"><span class="icon">🔥</span><strong>Companies with Layoffs, Closures, or Instability</strong><br>Add companies known for recent layoffs, closures, or financial instability. Profiles from these companies will be marked as "HOT" opportunities.</p>
+        <textarea id="hot-signals-companies" placeholder="Riskified\nD-ID\nActivefence\n...">${state.filters.hotSignals}</textarea>
+        <div class="button-group">
+            <button class="btn-secondary"><span class="icon-upload">↑</span> Upload File</button>
+            <button id="save-hot-signals" class="btn-save">Save <span id="save-confirmation-hot-signals" class="save-confirmation"></span></button>
+        </div>
+    `).replace('<!-- ... Blacklisted Companies ... -->', `
+         <h3><span class="icon">🚫</span> Blacklisted Companies</h3>
+         <p class="description">Add companies whose candidates should always be excluded.</p>
+         <textarea id="blacklist-companies" placeholder="Enter company names, one per line...">${state.filters.blacklist}</textarea>
+         <div class="button-group">
+             <button class="btn-secondary"><span class="icon-upload">↑</span> Upload File</button>
+             <button id="save-blacklist" class="btn-save">Save <span id="save-confirmation-blacklist" class="save-confirmation"></span></button>
+         </div>
+    `).replace('<!-- ... Past Candidates ... -->', `
+        <h3><span class="icon">🔄</span> Past Candidates</h3>
+        <p class="description">Add candidates who have already been contacted or processed to avoid duplicates.</p>
+        <textarea id="past-candidates" placeholder="Paste candidate LinkedIn URLs or names, one per line...">${state.filters.pastCandidates}</textarea>
+        <div class="button-group">
+            <button class="btn-secondary"><span class="icon-upload">↑</span> Upload File</button>
+            <button id="save-past-candidates" class="btn-save">Save <span id="save-confirmation-past-candidates" class="save-confirmation"></span></button>
+        </div>
+    `).replace('<!-- ... No-Go Companies (Preset) ... -->',`
+        <h3><span class="icon">⛔</span> No-Go Companies (Preset)</h3>
+        <p class="description">This is a default filter of companies that are always excluded. This list cannot be modified.</p>
+        <select id="no-go-companies" multiple disabled>${noGoCompanies.map(company => `<option>${company}</option>`).join('')}</select>
+    `).replace('<!-- ... Red Flags ... -->',`
+        <h3><span class="icon">🚩</span> Red Flags</h3>
+        <p class="description">Define rules to automatically filter out candidates.</p>
+        <div class="red-flags-list">
+            <label><input type="checkbox" name="red_flag" value="enterprise_only" ${state.filters.redFlags.preset.includes('enterprise_only') ? 'checked' : ''}> Enterprise-only experience</label>
+            <label><input type="checkbox" name="red_flag" value="freelance_consultant" ${state.filters.redFlags.preset.includes('freelance_consultant') ? 'checked' : ''}> Freelance/consultant roles</label>
+            <label><input type="checkbox" name="red_flag" value="grad_before_2000" ${state.filters.redFlags.preset.includes('grad_before_2000') ? 'checked' : ''}> Graduation year before 2000</label>
+            <label><input type="checkbox" name="red_flag" value="job_hopping" ${state.filters.redFlags.preset.includes('job_hopping') ? 'checked' : ''}> Lack of stability (frequent job changes, <2 years)</label>
+        </div>
+        <textarea id="custom-red-flags" placeholder="Add custom red flags, one per line...">${state.filters.redFlags.custom}</textarea>
+         <div class="button-group">
+            <button id="save-red-flags" class="btn-save">Save Flags <span id="save-confirmation-red-flags" class="save-confirmation"></span></button>
+        </div>
+    `);
+
+    // Add event listeners for this step
+    wrapper.querySelector('#back-step-2').addEventListener('click', () => {
+        state.currentStep = 1;
+        render(true);
+    });
+    
+    wrapper.querySelector('#next-step-2').addEventListener('click', () => {
+        state.currentStep = 3;
+        render(true);
+    });
+
+    // Add dashboard listeners if it exists
+    if(hasData) {
+        wrapper.querySelector('#run-filter-btn').addEventListener('click', runFilteringProcess);
+        wrapper.querySelector('#reset-filter-btn').addEventListener('click', resetFilteringProcess);
+        wrapper.querySelector('#view-rejected-btn').addEventListener('click', toggleRejectedView);
+    }
+
+    wrapper.querySelector('#save-hot-signals').addEventListener('click', () => saveFilterData('hotSignals', 'hot-signals-companies', 'save-confirmation-hot-signals'));
+    wrapper.querySelector('#save-blacklist').addEventListener('click', () => saveFilterData('blacklist', 'blacklist-companies', 'save-confirmation-blacklist'));
+    wrapper.querySelector('#save-past-candidates').addEventListener('click', () => saveFilterData('pastCandidates', 'past-candidates', 'save-confirmation-past-candidates'));
+    wrapper.querySelector('#save-red-flags').addEventListener('click', saveRedFlags);
+
+    return wrapper;
+}
+
+function saveFilterData(filterKey, elementId, confirmationId) {
+    const value = document.getElementById(elementId).value;
+    state.filters[filterKey] = value;
+    showSaveConfirmation(confirmationId);
+    console.log(`Saved ${filterKey}:`, state.filters[filterKey]);
+}
+
+function saveRedFlags() {
+    // Save preset flags
+    const presetFlags = [];
+    document.querySelectorAll('input[name="red_flag"]:checked').forEach(checkbox => {
+        presetFlags.push(checkbox.value);
+    });
+    state.filters.redFlags.preset = presetFlags;
+
+    // Save custom flags
+    const customFlags = document.getElementById('custom-red-flags').value;
+    state.filters.redFlags.custom = customFlags;
+    
+    showSaveConfirmation('save-confirmation-red-flags');
+    console.log('Saved Red Flags:', state.filters.redFlags);
+}
+
+function runFilteringProcess() {
+    let remainingProfiles = [...state.profileData];
+    let rejectedProfiles = [];
+    const linkedinCol = state.columnMapping.linkedinUrl;
+
+    // Get all filter data
+    const blacklist = state.filters.blacklist.split('\n').filter(Boolean).map(s => s.trim().toLowerCase());
+    const pastCandidates = state.filters.pastCandidates.split('\n').filter(Boolean).map(s => s.trim().toLowerCase());
+    
+    // No-Go companies (preset)
+    const noGoCompanies = [
+        "isracard", "matrix", "harel insurance & finance", "ness technologies", "bank leumi", 
+        "gav systems", "amdocs", "log-on software", "sapiens", "aman group", "nice", 
+        "maccabi healthcare services", "zap group", "clalit health services", "bank hapoalim", 
+        "israel tax authority", "discount bank", "infanity labs", "experis israel", 
+        "sapiens international", "magic software enterprises", "ethernity networks", 
+        "elad software systems", "mizrahi-tefahot bank", "migdal insurance", "menora mivtachim", 
+        "clal insurance", "taldor", "bynet data communications", "hachshara insurance company", 
+        "psagot investment house", "max it finance", "bizi"
+    ];
+
+    // Get red flags for filtering
+    const redFlags = {
+        preset: state.filters.redFlags.preset,
+        custom: state.filters.redFlags.custom.split('\n').filter(Boolean).map(s => s.trim().toLowerCase())
+    };
+
+    const companyCol = state.columnMapping.company;
+    const hotSignalCompanies = state.filters.hotSignals.split('\n').filter(Boolean).map(s => s.trim().toLowerCase());
+    const bigTech = ['microsoft', 'google', 'amazon', 'meta', 'facebook'];
+
+    remainingProfiles = remainingProfiles.filter(profile => {
+        // The profile summary is the primary text to search against.
+        const profileText = (profile.profileSummary || Object.values(profile).join(' ')).toLowerCase();
+        
+        // Add tags without rejecting the profile
+        if (!profile.tags) profile.tags = [];
+        const currentCompany = (profile[companyCol] || '').toLowerCase();
+        if (hotSignalCompanies.includes(currentCompany)) {
+            profile.tags.push('Hot Signal');
+        }
+
+        // Priority 1: Past candidates filter (most absolute filter)
+        if (linkedinCol && pastCandidates.length > 0) {
+             const profileUrl = (profile[linkedinCol] || '').toLowerCase();
+             if (pastCandidates.some(pc => pc && profileUrl.includes(pc))) {
+                 rejectedProfiles.push({ ...profile, reason: `Past Candidate` });
+                return false;
+             }
+        }
+
+        // Priority 2: Blacklist filter (searches entire profile text)
+        const blacklistedCompany = blacklist.find(company => company && profileText.includes(company));
+        if (blacklistedCompany) {
+            rejectedProfiles.push({ ...profile, reason: `Blacklist: ${blacklistedCompany}` });
+            return false;
+        }
+
+        // Priority 3: No-Go companies filter (searches entire profile text)
+        const noGoCompany = noGoCompanies.find(company => company && profileText.includes(company));
+        if (noGoCompany) {
+            rejectedProfiles.push({ ...profile, reason: `No-Go Company: ${noGoCompany}` });
+            return false;
+        }
+        
+        // Priority 4: Red Flags filtering
+        if (redFlags.preset.length > 0 || redFlags.custom.length > 0) {
+            // Check preset red flags
+            for (const flag of redFlags.preset) {
+                if (flag === 'job_hopping' && profileText.includes('job') && profileText.includes('hopping')) {
+                    rejectedProfiles.push({ ...profile, reason: `Red Flag: Job Hopping` });
+                    return false;
+                }
+                if (flag === 'freelance_consultant' && (profileText.includes('freelance') || profileText.includes('consultant'))) {
+                    rejectedProfiles.push({ ...profile, reason: `Red Flag: Freelance/Consultant` });
+                    return false;
+                }
+                if (flag === 'enterprise_only' && profileText.includes('enterprise') && !profileText.includes('startup')) {
+                    const hasBigTech = bigTech.some(company => profileText.includes(company));
+                    if (hasBigTech) {
+                        // Saved by Big Tech exception. Tag as Hidden Gem and continue.
+                        if (!profile.tags) profile.tags = [];
+                        profile.tags.push('Hidden Gem');
+                    } else {
+                        // No Big Tech exception, reject.
+                        rejectedProfiles.push({ ...profile, reason: `Red Flag: Enterprise Only` });
+                        return false;
+                    }
+                }
+                if (flag === 'grad_before_2000' && profileText.includes('199')) {
+                    rejectedProfiles.push({ ...profile, reason: `Red Flag: Graduated before 2000` });
+                    return false;
+                }
+            }
+            
+            // Check custom red flags
+            for (const flag of redFlags.custom) {
+                if (flag && profileText.includes(flag)) {
+                    rejectedProfiles.push({ ...profile, reason: `Red Flag: ${flag}` });
+                    return false;
+                }
             }
         }
-        if (!indicator) return;
-        indicator.style.display = 'inline';
-        indicator.classList.add('show');
+
+        return true;
+    });
+
+    state.filteredResults = {
+        initialCount: state.profileData.length,
+        rejectedProfiles: rejectedProfiles,
+        rejectedCount: rejectedProfiles.length,
+        remainingCount: remainingProfiles.length
+    };
+    render(); // Re-render to show updated stats, NO SCROLL
+}
+
+function resetFilteringProcess() {
+    state.filteredResults = {
+        initialCount: state.profileData.length,
+        rejectedCount: 0,
+        remainingCount: state.profileData.length,
+        rejectedProfiles: []
+    };
+    render(); // NO SCROLL
+}
+
+function toggleRejectedView() {
+    const view = document.getElementById('rejected-profiles-view');
+    const list = document.getElementById('rejected-list');
+    if (view.classList.contains('hidden')) {
+        const nameCol = state.columnMapping.firstName || state.fileHeaders[0];
+        const linkCol = state.columnMapping.linkedinUrl;
+
+        list.innerHTML = state.filteredResults.rejectedProfiles.map(p => `
+            <div class="rejected-item">
+                <div class="rejected-name">${p[nameCol] || 'N/A'}</div>
+                <div class="rejected-reason">${p.reason}</div>
+                <div class="rejected-link">${linkCol && p[linkCol] ? `<a href="${p[linkCol]}" target="_blank">Profile</a>` : 'No Link'}</div>
+            </div>
+        `).join('');
+        view.classList.remove('hidden');
+    } else {
+        view.classList.add('hidden');
+    }
+}
+
+function renderStep3_RankingCriteria() {
+    const wrapper = document.createElement('div');
+    const universities = [
+        "Hebrew University of Jerusalem", "Technion – Israel Institute of Technology", "Tel Aviv University",
+        "Bar-Ilan University", "Ben-Gurion University of the Negev", "Weizmann Institute of Science",
+        "Reichman University (IDC Herzliya)", "University of Haifa", "The Academic College of Tel-Aviv-Yaffo",
+        "The Open University of Israel", "Tel Aviv-Yafo Academic College"
+    ];
+
+    const initialTotal = Object.values(state.rankingCriteria.weights).reduce((sum, val) => sum + val, 0);
+
+    const step3HTML = `
+        <div class="step-container" id="step-3">
+             <div class="step-header">
+                <h2>Step 3: Define Ranking Criteria</h2>
+            </div>
+
+            <div class="criteria-section">
+                <div class="criteria-row">
+                    <label for="min-experience">Minimum Years of Experience</label>
+                    <div class="input-with-save">
+                        <input type="number" id="min-experience" min="0" value="${state.rankingCriteria.minExperience}">
+                        <button id="save-experience" class="btn-save">Save <span id="save-confirmation-experience" class="save-confirmation"></span></button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="criteria-section">
+                <h3>Required Skills</h3>
+                <div class="skills-input-group">
+                    <div class="criteria-row">
+                        <label for="required-skills-and">All of these skills (AND logic)</label>
+                        <textarea id="required-skills-and" placeholder="e.g., React, Node.js, SQL">${state.rankingCriteria.requiredSkills.and}</textarea>
+                    </div>
+                    <div class="criteria-row">
+                        <label for="required-skills-or">Any of these skills (OR logic)</label>
+                        <textarea id="required-skills-or" placeholder="e.g., Go, Python, Java">${state.rankingCriteria.requiredSkills.or}</textarea>
+                    </div>
+                </div>
+                 <div class="button-group">
+                    <button id="save-skills" class="btn-save">Save Skills <span id="save-confirmation-skills" class="save-confirmation"></span></button>
+                </div>
+            </div>
+
+            <div class="criteria-section">
+                <h3>Preferred Universities</h3>
+                 <div class="uni-options">
+                    <button id="uni-select-all" class="btn-link">Select All</button>
+                    <button id="uni-clear" class="btn-link">Clear Selection</button>
+                 </div>
+                <div class="uni-list">
+                    ${universities.map(uni => `
+                        <label><input type="checkbox" name="university" value="${uni}" ${state.rankingCriteria.universities.selected.includes(uni) ? 'checked' : ''}> ${uni}</label>
+                    `).join('')}
+                </div>
+                 <div class="uni-meta-options">
+                    <label><input type="checkbox" id="no-academic-match" name="uni-meta" value="no_match" ${state.rankingCriteria.universities.noAcademicMatch ? 'checked' : ''}> No Academic Match Required</label>
+                </div>
+                <div class="button-group">
+                    <button id="save-universities" class="btn-save">Save Universities <span id="save-confirmation-universities" class="save-confirmation"></span></button>
+                </div>
+            </div>
+
+            <div class="criteria-section">
+                <h3>Excellence & Background Factors</h3>
+                <p class="description">Select factors to reward candidates who exhibit them. Not having them will not penalize the score.</p>
+                <div class="checkbox-group">
+                    <label>
+                        <input type="checkbox" id="military-relevance" ${state.rankingCriteria.militaryRelevance ? 'checked' : ''}>
+                        Military background relevance
+                    </label>
+                    <label>
+                        <input type="checkbox" id="academic-excellence" ${state.rankingCriteria.academicExcellence ? 'checked' : ''}>
+                        Academic excellence: high GPA, honors, notable projects
+                    </label>
+                    <label>
+                        <input type="checkbox" id="has-publications" ${state.rankingCriteria.hasPublications ? 'checked' : ''}>
+                        Academic publications / patents
+                    </label>
+                    <label>
+                        <input type="checkbox" id="is-speaker" ${state.rankingCriteria.isSpeaker ? 'checked' : ''}>
+                        Conference speaking / lectures
+                    </label>
+                </div>
+                 <div class="button-group">
+                    <button id="save-excellence" class="btn-save">Save Factors <span id="save-confirmation-excellence" class="save-confirmation"></span></button>
+                </div>
+            </div>
+
+            <div class="criteria-section">
+                <h3><span class="icon">✨</span> Custom Traits</h3>
+                <p class="description">Define custom traits for the AI to look for. Write anything that matters to you – e.g. experience in cybersecurity, strong GitHub, working at global companies. The AI will semantically match it.</p>
+                <p class="example-text"><strong>Example:</strong> Name: <code>Tel Aviv</code>, Description: <code>lives or works in Tel Aviv</code></p>
+                <div id="custom-traits-container">
+                    ${state.rankingCriteria.customTraits.map((trait, index) => `
+                         <div class="custom-trait-row" data-index="${index}">
+                            <input type="text" class="trait-name" placeholder="Trait Name" value="${trait.name || ''}">
+                            <input type="text" class="trait-description" placeholder="Optional: Description to guide AI" value="${trait.description || ''}">
+                            <button class="btn-remove remove-trait-btn">×</button>
+                        </div>
+                    `).join('')}
+                </div>
+                <button id="add-trait-btn" class="btn-link">+ Add another trait</button>
+                <div class="button-group">
+                    <button id="save-custom-traits" class="btn-save">Save Traits <span id="save-confirmation-custom-traits" class="save-confirmation"></span></button>
+                </div>
+            </div>
+
+            <div class="criteria-section">
+                <h3><span class="icon">🎯</span> Ideal Profiles (Semantic Benchmark)</h3>
+                <p class="description">Paste profiles of ideal candidates into the slots below. Similarity to these profiles is a heavily weighted factor in the final ranking. You can use one or all slots.</p>
+                <div class="ideal-profiles-container">
+                    ${state.rankingCriteria.idealProfiles.map((profile, index) => `
+                         <textarea class="ideal-profile-input" data-index="${index}" placeholder="Paste ideal profile #${index + 1}...">${profile}</textarea>
+                    `).join('')}
+                </div>
+                 <div class="button-group">
+                    <button id="save-ideal-profiles" class="btn-save">Save Profiles <span id="save-confirmation-ideal-profiles" class="save-confirmation"></span></button>
+                </div>
+            </div>
+
+            <div class="criteria-section">
+                <h3><span class="icon">⚖️</span> Weight Sliders</h3>
+                <p class="description">Adjust the importance of each ranking factor. The AI will use these weights to calculate the final score for each candidate.</p>
+                <div id="weights-container">
+                    ${Object.entries(state.rankingCriteria.weights).map(([key, value]) => `
+                        <div class="weight-slider-row">
+                            <label for="weight-${key}" class="weight-slider-label">${key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}</label>
+                            <input type="range" id="weight-${key}" class="weight-slider" data-key="${key}" min="0" max="100" value="${value}">
+                            <span class="slider-value">${value}%</span>
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="weights-total">
+                    <strong>Total: <span id="weights-total-value">${initialTotal}%</span></strong>
+                </div>
+                <div class="button-group">
+                    <button id="save-weights" class="btn-save">Save Weights <span id="save-confirmation-weights" class="save-confirmation"></span></button>
+                </div>
+            </div>
+
+            <div class="navigation-buttons">
+                <button id="back-step-3" class="btn-secondary">← Back</button>
+                <button id="next-step-3" class="btn-primary">Continue to Ranking →</button>
+            </div>
+        </div>
+    `;
+    wrapper.innerHTML = step3HTML;
+
+    // Add event listeners
+    wrapper.querySelector('#back-step-3').addEventListener('click', () => {
+        state.currentStep = 2;
+        render(true);
+    });
+    
+    // Save buttons
+    wrapper.querySelector('#save-experience').addEventListener('click', saveExperience);
+    wrapper.querySelector('#save-skills').addEventListener('click', saveSkills);
+    wrapper.querySelector('#save-universities').addEventListener('click', saveUniversities);
+    wrapper.querySelector('#save-excellence').addEventListener('click', saveExcellenceFactors);
+
+    // Custom Traits Listeners
+    wrapper.querySelector('#add-trait-btn').addEventListener('click', addCustomTrait);
+    wrapper.querySelectorAll('.remove-trait-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => removeCustomTrait(e));
+    });
+    wrapper.querySelector('#save-custom-traits').addEventListener('click', saveCustomTraits);
+    wrapper.querySelector('#save-ideal-profiles').addEventListener('click', saveIdealProfiles);
+    wrapper.querySelector('#save-weights').addEventListener('click', saveWeights);
+
+    // Slider value update listener
+    wrapper.querySelectorAll('.weight-slider').forEach(slider => {
+        slider.addEventListener('input', (e) => {
+            const value = e.target.value;
+            e.target.nextElementSibling.textContent = `${value}%`;
+            updateWeightsTotal();
+        });
+    });
+
+    // University selection listeners
+    wrapper.querySelector('#uni-select-all').addEventListener('click', () => toggleAllUniversities(true));
+    wrapper.querySelector('#uni-clear').addEventListener('click', () => toggleAllUniversities(false));
+
+    // Continue to ranking button
+    wrapper.querySelector('#next-step-3').addEventListener('click', () => {
+        state.currentStep = 4;
+        render(true);
+    });
+
+    // Set initial state for weights total
+    updateWeightsTotal();
+
+    return wrapper;
+}
+
+function saveExperience() {
+    state.rankingCriteria.minExperience = document.getElementById('min-experience').value;
+    showSaveConfirmation('save-confirmation-experience');
+    console.log('Saved Experience:', state.rankingCriteria.minExperience);
+}
+
+function saveSkills() {
+    state.rankingCriteria.requiredSkills.and = document.getElementById('required-skills-and').value;
+    state.rankingCriteria.requiredSkills.or = document.getElementById('required-skills-or').value;
+    showSaveConfirmation('save-confirmation-skills');
+    console.log('Saved Skills:', state.rankingCriteria.requiredSkills);
+}
+
+function saveUniversities() {
+    const selected = [];
+    document.querySelectorAll('input[name="university"]:checked').forEach(checkbox => {
+        selected.push(checkbox.value);
+    });
+    state.rankingCriteria.universities.selected = selected;
+    state.rankingCriteria.universities.noAcademicMatch = document.getElementById('no-academic-match').checked;
+    showSaveConfirmation('save-confirmation-universities');
+    console.log('Saved Universities:', state.rankingCriteria.universities);
+}
+
+function saveExcellenceFactors() {
+    state.rankingCriteria.militaryRelevance = document.getElementById('military-relevance').checked;
+    state.rankingCriteria.academicExcellence = document.getElementById('academic-excellence').checked;
+    state.rankingCriteria.hasPublications = document.getElementById('has-publications').checked;
+    state.rankingCriteria.isSpeaker = document.getElementById('is-speaker').checked;
+    showSaveConfirmation('save-confirmation-excellence');
+    console.log('Saved Excellence Factors:', {
+        military: state.rankingCriteria.militaryRelevance,
+        academic: state.rankingCriteria.academicExcellence,
+        publications: state.rankingCriteria.hasPublications,
+        speaker: state.rankingCriteria.isSpeaker
+    });
+}
+
+function addCustomTrait() {
+    state.rankingCriteria.customTraits.push({ name: '', description: '' });
+    render(); // This is inefficient but simple for now. NO SCROLL
+}
+
+function removeCustomTrait(event) {
+    const index = parseInt(event.target.closest('.custom-trait-row').dataset.index, 10);
+    state.rankingCriteria.customTraits.splice(index, 1);
+    render(); // NO SCROLL
+}
+
+function saveCustomTraits() {
+    const traits = [];
+    document.querySelectorAll('.custom-trait-row').forEach(row => {
+        const name = row.querySelector('.trait-name').value;
+        const description = row.querySelector('.trait-description').value;
+        if (name) { // Only save traits that have a name
+            traits.push({ name, description });
+        }
+    });
+    state.rankingCriteria.customTraits = traits;
+    showSaveConfirmation('save-confirmation-custom-traits');
+    console.log('Saved Custom Traits:', state.rankingCriteria.customTraits);
+}
+
+function saveIdealProfiles() {
+    const profiles = [];
+    document.querySelectorAll('.ideal-profile-input').forEach(textarea => {
+        profiles.push(textarea.value);
+    });
+    state.rankingCriteria.idealProfiles = profiles;
+    showSaveConfirmation('save-confirmation-ideal-profiles');
+    console.log('Saved Ideal Profiles:', state.rankingCriteria.idealProfiles);
+}
+
+function saveWeights() {
+    document.querySelectorAll('.weight-slider').forEach(slider => {
+        const key = slider.dataset.key;
+        const value = parseInt(slider.value, 10);
+        if (key in state.rankingCriteria.weights) {
+            state.rankingCriteria.weights[key] = value;
+        }
+    });
+    showSaveConfirmation('save-confirmation-weights');
+    console.log('Saved Weights:', state.rankingCriteria.weights);
+}
+
+function toggleAllUniversities(select) {
+    document.querySelectorAll('input[name="university"]').forEach(checkbox => {
+        checkbox.checked = select;
+    });
+}
+
+function updateWeightsTotal() {
+    const sliders = document.querySelectorAll('.weight-slider');
+    if (sliders.length === 0) return;
+
+    const total = Array.from(sliders).reduce((sum, slider) => sum + parseInt(slider.value, 10), 0);
+    
+    const totalEl = document.getElementById('weights-total-value');
+    if (totalEl) {
+        totalEl.textContent = `${total}%`;
+        totalEl.parentElement.style.color = total !== 100 ? '#e74c3c' : 'inherit'; // red if not 100
+    }
+}
+
+function showSaveConfirmation(elementId) {
+    const confirmationSpan = document.getElementById(elementId);
+    if (confirmationSpan) {
+        confirmationSpan.textContent = 'Saved!';
+        confirmationSpan.classList.add('visible');
+
         setTimeout(() => {
-            indicator.classList.remove('show');
-            setTimeout(() => {
-                indicator.style.display = 'none';
-            }, 300);
+            confirmationSpan.classList.remove('visible');
+            confirmationSpan.textContent = ''; // Clear text after fading out
         }, 2000);
     }
+}
 
-    // Tooltips
-    setupTooltips() {
-        // Tooltips are handled by CSS hover states
-        // Additional tooltip functionality can be added here if needed
-    }
+function renderStep4_ReviewAndRank() {
+    const wrapper = document.createElement('div');
+    
+    const allProfiles = state.filteredResults.rejectedProfiles 
+        ? state.profileData.filter(p => !state.filteredResults.rejectedProfiles.find(rp => rp[state.columnMapping.linkedinUrl] === p[state.columnMapping.linkedinUrl])) 
+        : state.profileData;
+    
+    state.rankingProcess.profilesToRank = allProfiles;
 
-    // Navigation
-    nextStep() {
-        if (this.currentStep < this.totalSteps) {
-            this.currentStep++;
-            this.updateProgressBar();
-            this.showStep(this.currentStep);
-        }
-    }
-
-    prevStep() {
-        if (this.currentStep > 1) {
-            this.currentStep--;
-            this.updateProgressBar();
-            this.showStep(this.currentStep);
-        }
-    }
-
-    // Debug function to test navigation
-    debugNavigation() {
-        console.log('Current step:', this.currentStep);
-        console.log('Total steps:', this.totalSteps);
-        console.log('Step 2 element:', document.getElementById('step-2'));
-        console.log('Step 2 display:', document.getElementById('step-2').style.display);
-    }
-
-    // Override showStep to setup step-specific functionality
-    showStep(stepNumber) {
-        console.log('Showing step:', stepNumber);
-        // Hide all steps
-        document.querySelectorAll('.step-content').forEach(step => {
-            step.classList.remove('active');
-            step.style.display = 'none';
-        });
-        // Show current step
-        const currentStepElement = document.getElementById(`step-${stepNumber}`);
-        if (currentStepElement) {
-            currentStepElement.classList.add('active');
-            currentStepElement.style.display = 'block';
-            // Setup step-specific functionality
-            if (stepNumber === 2) {
-                this.setupStep2();
-            } else if (stepNumber === 3) {
-                this.setupStep3();
-            } else if (stepNumber === 4) {
-                this.setupStep4();
-            } else if (stepNumber === 5) {
-                this.setupStep5();
-            } else if (stepNumber === 6) {
-                this.setupStep6();
-            }
-        }
-        // Update navigation buttons
-        const prevBtn = document.querySelector('.prev-btn');
-        const nextBtn = document.querySelector('.next-btn');
-        prevBtn.disabled = stepNumber === 1;
-        nextBtn.disabled = stepNumber === this.totalSteps;
-        if (stepNumber === this.totalSteps) {
-            nextBtn.textContent = 'Finish';
+    const { profilesToRank, rankedProfiles, progress, status, activeFilter, searchQuery } = state.rankingProcess;
+    const remainingToRank = profilesToRank.length - rankedProfiles.length;
+    
+    // Calculate progress percentage
+    const progressPercentage = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
+    
+    // Calculate estimated time remaining
+    let timeRemaining = '';
+    if (progress.startTime && progress.current > 0) {
+        const elapsed = Date.now() - progress.startTime;
+        const avgTimePerProfile = elapsed / progress.current;
+        const remainingProfiles = progress.total - progress.current;
+        const estimatedRemaining = avgTimePerProfile * remainingProfiles;
+        
+        if (estimatedRemaining > 60000) { // More than 1 minute
+            timeRemaining = `~${Math.round(estimatedRemaining / 60000)} דקות נותרו`;
         } else {
-            nextBtn.textContent = 'Next';
+            timeRemaining = `~${Math.round(estimatedRemaining / 1000)} שניות נותרו`;
         }
-        console.log('Step display updated');
     }
 
-    updateProgressBar() {
-        document.querySelectorAll('.progress-step').forEach((step, index) => {
-            const stepNumber = index + 1;
-            if (stepNumber <= this.currentStep) {
-                step.classList.add('active');
-            } else {
-                step.classList.remove('active');
+    const availableModels = [
+        "Embedding small 3 + GPT 3.5 turbo + GPT 4.5 mini",
+        "Embedding small 3",
+        "Embedding small 3 + GPT 4.5 mini turbo"
+    ];
+    
+    let resultsHTML = '';
+    if (status === 'complete' && rankedProfiles.length > 0) {
+        // --- RESULTS VIEW ---
+        const nameCol = state.columnMapping.firstName || state.fileHeaders[0];
+        const lastNameCol = state.columnMapping.lastName || '';
+        const titleCol = state.columnMapping.title || state.fileHeaders[1];
+        const companyCol = state.columnMapping.company || state.fileHeaders[2];
+        const mutualCol = state.columnMapping.mutualConnections || '';
+        const linkedinCol = state.columnMapping.linkedinUrl || '';
+
+        const topCount = rankedProfiles.filter(p => p.category === 'Top').length;
+        const goodCount = rankedProfiles.filter(p => p.category === 'Good').length;
+        const rejectedCount = rankedProfiles.filter(p => p.category === 'Rejected').length;
+        const hiddenGemsCount = rankedProfiles.filter(p => p.tags && p.tags.includes('Hidden Gem')).length;
+        const hotSignalsCount = rankedProfiles.filter(p => p.tags && p.tags.includes('Hot Signal')).length;
+
+        // Filter profiles based on active filter and search query
+        const filteredProfiles = rankedProfiles.filter(profile => {
+            // Category filter
+            let categoryMatch = false;
+            switch (activeFilter) {
+                case 'Top': categoryMatch = profile.category === 'Top'; break;
+                case 'Good': categoryMatch = profile.category === 'Good'; break;
+                case 'Hidden Gems': categoryMatch = profile.tags && profile.tags.includes('Hidden Gem'); break;
+                case 'Hot Signals': categoryMatch = profile.tags && profile.tags.includes('Hot Signal'); break;
+                case 'Rejected': categoryMatch = profile.category === 'Rejected'; break;
+                case 'All': categoryMatch = true; break;
+                default: categoryMatch = true;
             }
-        });
-    }
 
-    // Step 2 - Pre-filter functionality
-    setupStep2() {
-        this.setupFileUpload();
-        this.setupFilterLists();
-        this.loadFilterData();
-        setTimeout(() => {
-            const skipBtn = document.getElementById('skip-to-ranking-btn');
-            if (skipBtn) {
-                skipBtn.onclick = () => {
-                    this.showStep(5);
-                };
-            }
-        }, 0);
-    }
+            if (!categoryMatch) return false;
 
-    setupFileUpload() {
-        const fileInput = document.getElementById('profiles-file');
-        fileInput.addEventListener('change', (e) => this.handleProfilesFileUpload(e));
-    }
-
-    handleProfilesFileUpload(event) {
-        const file = event.target.files[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const content = e.target.result;
-            this.parseCSV(content, file.name);
-        };
-        reader.readAsText(file);
-    }
-
-    parseCSV(content, fileName) {
-        try {
-            const results = Papa.parse(content, { header: true, skipEmptyLines: true });
-            if (results.errors.length > 0) {
-                console.warn('CSV parsing warnings:', results.errors);
+            // Search query filter
+            if (searchQuery) {
+                const query = searchQuery.toLowerCase();
+                const profileText = (profile.profileSummary || Object.values(profile).join(' ')).toLowerCase();
+                return profileText.includes(query);
             }
             
-            this.profiles = results.data.map((row, index) => ({
-                ...row,
-                id: index + 1,
-                raw: row
-            }));
-            this.headers = Object.keys(results.data[0] || {});
-            
-            // Debug: print headers and first row
-            console.log('[DEBUG] Headers:', this.headers);
-            console.log('[DEBUG] First row:', this.profiles[0]);
-            console.log('[DEBUG] First row values:');
-            this.headers.forEach(h => {
-                console.log(h, JSON.stringify(this.profiles[0][h]));
-            });
-            
-            console.log(`[Scorely] Loaded ${this.profiles.length} profiles from ${fileName}`);
-            
-            // Show column mapping
-            this.showColumnMapping(this.headers);
-            
-            // Update row range indicators with new profile count
-            this.updateRowRangeIndicators();
-            
-        } catch (error) {
-            console.error('CSV parsing error:', error);
-            alert('Error parsing CSV file. Please check the file format.');
-        }
-    }
-
-    showColumnMapping(headers) {
-        const mappingContainer = document.getElementById('column-mapping');
-        const selects = mappingContainer.querySelectorAll('.mapping-select');
-        
-        selects.forEach(select => {
-            select.innerHTML = '<option value="">Select column...</option>';
-            headers.forEach(header => {
-                const option = document.createElement('option');
-                option.value = header;
-                option.textContent = header;
-                select.appendChild(option);
-            });
-        });
-        
-        mappingContainer.style.display = 'block';
-    }
-
-    saveColumnMapping() {
-        const firstNameCol = document.getElementById('map-first-name').value;
-        const lastNameCol = document.getElementById('map-last-name').value;
-        const companyCol = document.getElementById('map-company').value;
-        const titleCol = document.getElementById('map-title') ? document.getElementById('map-title').value : '';
-        const linkedinCol = document.getElementById('map-linkedin') ? document.getElementById('map-linkedin').value : '';
-
-        if (!firstNameCol || !lastNameCol || !companyCol) {
-            alert('Please map all required columns');
-            return;
-        }
-
-        this.columnMapping = {
-            firstName: firstNameCol,
-            lastName: lastNameCol,
-            company: companyCol,
-            title: titleCol,
-            linkedin: linkedinCol
-        };
-
-        this.appData.columnMapping = this.columnMapping;
-        this.saveAppData();
-        
-        // Create normalized profiles (only valid rows), but keep all original columns
-        this.profiles = this.profiles.filter(row =>
-            (row[firstNameCol] && row[firstNameCol].trim()) &&
-            (row[lastNameCol] && row[lastNameCol].trim()) &&
-            (row[companyCol] && row[companyCol].trim())
-        ).map(row => ({
-            ...row, // keep all original columns
-            firstName: row[firstNameCol].trim(),
-            lastName: row[lastNameCol].trim(),
-            company: row[companyCol].trim(),
-            title: titleCol && row[titleCol] ? row[titleCol].trim() : '',
-            linkedin: linkedinCol && row[linkedinCol] ? row[linkedinCol].trim() : '',
-            fullName: `${row[firstNameCol].trim()} ${row[lastNameCol].trim()}`,
-            raw: row
-        }));
-        
-        this.updateDashboardStats();
-        this.showSavedIndicator('column-mapping');
-        
-        // Show mapping status with real count
-        let status = document.getElementById('mapping-status');
-        if (!status) {
-            const btn = document.querySelector('#column-mapping .save-btn');
-            status = document.createElement('span');
-            status.id = 'mapping-status';
-            status.style.marginLeft = '16px';
-            status.style.color = '#2196F3';
-            btn.parentNode.insertBefore(status, btn.nextSibling);
-        }
-        status.textContent = `Detected ${this.profiles.length} valid profiles after mapping.`;
-        
-        // Update row range indicators with new profile count
-        this.updateRowRangeIndicators();
-        
-        // Optionally scroll to dashboard or make it visible
-        const dashboard = document.querySelector('.dashboard-stats');
-        if (dashboard) {
-            dashboard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-        
-        console.log(`[Scorely] Column mapping saved. ${this.profiles.length} valid profiles created.`);
-        
-        // Refresh columns grid for summary mapping with new profiles
-        this.populateColumnsGrid();
-    }
-
-    setupFilterLists() {
-        // No-go companies checkboxes
-        document.querySelectorAll('.preset-companies input[type="checkbox"]').forEach(checkbox => {
-            checkbox.addEventListener('change', () => this.saveFilterList('noGoCompanies'));
-        });
-    }
-
-    loadFilterData() {
-        // Load saved filter lists
-        if (this.appData.blacklist) {
-            document.getElementById('blacklist').value = this.appData.blacklist;
-        }
-        if (this.appData.pastCandidates) {
-            document.getElementById('past-candidates').value = this.appData.pastCandidates;
-        }
-        if (this.appData.noGoCompanies) {
-            document.getElementById('no-go-companies').value = this.appData.noGoCompanies;
-        }
-        if (this.appData.noGoPreset) {
-            this.appData.noGoPreset.forEach(company => {
-                const checkbox = document.querySelector(`input[value="${company}"]`);
-                if (checkbox) checkbox.checked = true;
-            });
-        }
-    }
-
-    saveFilterList(listType) {
-        switch (listType) {
-            case 'blacklist':
-                this.appData.blacklist = document.getElementById('blacklist').value;
-                break;
-            case 'pastCandidates':
-                this.appData.pastCandidates = document.getElementById('past-candidates').value;
-                break;
-            case 'noGoCompanies':
-                this.appData.noGoCompanies = document.getElementById('no-go-companies').value;
-                // Save preset selections
-                const presetCompanies = [];
-                document.querySelectorAll('.preset-companies input[type="checkbox"]:checked').forEach(cb => {
-                    presetCompanies.push(cb.value);
-                });
-                this.appData.noGoPreset = presetCompanies;
-                break;
-        }
-        
-        this.saveAppData();
-        this.showSavedIndicator(listType);
-    }
-
-    clearFilterList(listType) {
-        switch (listType) {
-            case 'blacklist':
-                document.getElementById('blacklist').value = '';
-                this.appData.blacklist = '';
-                break;
-            case 'pastCandidates':
-                document.getElementById('past-candidates').value = '';
-                this.appData.pastCandidates = '';
-                break;
-            case 'noGoCompanies':
-                document.getElementById('no-go-companies').value = '';
-                this.appData.noGoCompanies = '';
-                // Clear preset selections
-                document.querySelectorAll('.preset-companies input[type="checkbox"]').forEach(cb => {
-                    cb.checked = false;
-                });
-                this.appData.noGoPreset = [];
-                break;
-        }
-        
-        this.saveAppData();
-        this.showSavedIndicator(listType);
-    }
-
-    runFiltering() {
-        if (!this.profiles || this.profiles.length === 0) {
-            alert('No profiles loaded. Please upload a CSV file first.');
-            return;
-        }
-
-        this.filteredProfiles = [...this.profiles];
-        this.filterStats = {
-            duplicates: 0,
-            blacklist: 0,
-            pastCandidates: 0,
-            noGoCompanies: 0
-        };
-        
-        const originalCount = this.filteredProfiles.length;
-
-        // Apply filters
-        this.deduplicateProfiles();
-        this.applyBlacklistFilter();
-        this.applyPastCandidatesFilter();
-        this.applyNoGoCompaniesFilter();
-
-        const finalCount = this.filteredProfiles.length;
-        
-        // Update dashboard stats
-        this.updateDashboardStats();
-        
-        // Show results
-        this.showFilterResults();
-        
-        // Update row range indicators with new profile count
-        this.updateRowRangeIndicators();
-        
-        console.log(`[Scorely] Basic filtering complete: ${originalCount} → ${finalCount} profiles`);
-    }
-
-    deduplicateProfiles() {
-        const seen = new Set();
-        const originalLength = this.filteredProfiles.length;
-        
-        this.filteredProfiles = this.filteredProfiles.filter(profile => {
-            const key = `${profile.fullName.toLowerCase()}-${profile.company.toLowerCase()}`;
-            if (seen.has(key)) {
-                this.filterStats.duplicates++;
-                return false;
-            }
-            seen.add(key);
             return true;
         });
-    }
 
-    applyBlacklistFilter() {
-        if (!this.appData.blacklist) return;
-        
-        const blacklist = this.appData.blacklist.split('\n')
-            .map(line => line.trim().toLowerCase())
-            .filter(line => line.length > 0);
-
-        this.filteredProfiles = this.filteredProfiles.filter(profile => {
-            // Blacklist: Only filter if currently working at the company
-            const currentCompany = profile.company.toLowerCase();
-            const isBlacklisted = blacklist.some(blacklisted => 
-                currentCompany.includes(blacklisted) || blacklisted.includes(currentCompany)
-            );
-            
-            if (isBlacklisted) {
-                this.filterStats.blacklist++;
-                return false;
-            }
-            return true;
-        });
-    }
-
-    applyPastCandidatesFilter() {
-        if (!this.appData.pastCandidates) return;
-        
-        const pastCandidates = this.appData.pastCandidates.split('\n')
-            .map(line => line.trim().toLowerCase())
-            .filter(line => line.length > 0);
-
-        this.filteredProfiles = this.filteredProfiles.filter(profile => {
-            const fullName = profile.fullName.toLowerCase();
-            const isPastCandidate = pastCandidates.some(candidate => 
-                fullName.includes(candidate) || candidate.includes(fullName)
-            );
-            
-            if (isPastCandidate) {
-                this.filterStats.pastCandidates++;
-                return false;
-            }
-            return true;
-        });
-    }
-
-    applyNoGoCompaniesFilter() {
-        const noGoList = [];
-        
-        // Add preset companies
-        document.querySelectorAll('.preset-companies input[type="checkbox"]:checked').forEach(cb => {
-            noGoList.push(cb.value.toLowerCase());
-        });
-        
-        // Add custom companies
-        if (this.appData.noGoCompanies) {
-            const customCompanies = this.appData.noGoCompanies.split('\n')
-                .map(line => line.trim().toLowerCase())
-                .filter(line => line.length > 0);
-            noGoList.push(...customCompanies);
-        }
-
-        this.filteredProfiles = this.filteredProfiles.filter(profile => {
-            // No-Go: Filter if currently working OR has worked in the past
-            // For now, we only have current company info, so we check current company
-            // In a real implementation, you'd also check employment history
-            const currentCompany = profile.company.toLowerCase();
-            const isNoGo = noGoList.some(noGo => 
-                currentCompany.includes(noGo) || noGo.includes(currentCompany)
-            );
-            
-            if (isNoGo) {
-                this.filterStats.noGoCompanies++;
-                return false;
-            }
-            return true;
-        });
-    }
-
-    updateDashboardStats() {
-        // Initialize filterStats if it doesn't exist
-        if (!this.filterStats) {
-            this.filterStats = {
-                duplicates: 0,
-                blacklist: 0,
-                pastCandidates: 0,
-                noGoCompanies: 0
-            };
-        }
-        
-        const uploadedCount = this.profiles ? this.profiles.length : 0;
-        const filteredOutCount = this.filterStats.duplicates + this.filterStats.blacklist + 
-            this.filterStats.pastCandidates + this.filterStats.noGoCompanies;
-        const remainingCount = this.filteredProfiles ? this.filteredProfiles.length : uploadedCount;
-
-        // Update the dashboard elements
-        const uploadedCountEl = document.getElementById('uploaded-count');
-        const filteredOutCountEl = document.getElementById('filtered-out-count');
-        const remainingCountEl = document.getElementById('remaining-count');
-        
-        if (uploadedCountEl) uploadedCountEl.textContent = uploadedCount;
-        if (filteredOutCountEl) filteredOutCountEl.textContent = filteredOutCount;
-        if (remainingCountEl) remainingCountEl.textContent = remainingCount;
-
-        // Update individual filter counts
-        const duplicatesCountEl = document.getElementById('duplicates-count');
-        const blacklistCountEl = document.getElementById('blacklist-count');
-        const pastCandidatesCountEl = document.getElementById('past-candidates-count');
-        const noGoCountEl = document.getElementById('no-go-count');
-        
-        if (duplicatesCountEl) duplicatesCountEl.textContent = this.filterStats.duplicates;
-        if (blacklistCountEl) blacklistCountEl.textContent = this.filterStats.blacklist;
-        if (pastCandidatesCountEl) pastCandidatesCountEl.textContent = this.filterStats.pastCandidates;
-        if (noGoCountEl) noGoCountEl.textContent = this.filterStats.noGoCompanies;
-    }
-
-    showFilterResults() {
-        // Show success message
-        const message = `Filtering complete! ${this.filteredProfiles.length} profiles remain out of ${this.profiles.length} uploaded.`;
-        // Create a temporary success message
-        const successDiv = document.createElement('div');
-        successDiv.className = 'filter-success';
-        successDiv.innerHTML = `
-            <div style="background: #8BC34A; color: white; padding: 15px; border-radius: 8px; margin: 20px 0; text-align: center;">
-                <strong>✓ ${message}</strong>
+        resultsHTML = `
+            <div class="results-main-header">
+                <h2>Results Dashboard</h2>
+                <p class="subtitle">Review, search, and export your ranked candidates. Adjust filters and rerun as needed.</p>
             </div>
-        `;
-        const dashboardSection = document.querySelector('#step-2 .form-section:last-child');
-        if (dashboardSection) {
-            dashboardSection.insertBefore(successDiv, dashboardSection.firstChild);
-        } else {
-            // fallback: append to step-2
-            document.getElementById('step-2').appendChild(successDiv);
-        }
-        // Remove message after 5 seconds
-        setTimeout(() => {
-            if (successDiv.parentNode) {
-                successDiv.parentNode.removeChild(successDiv);
-            }
-        }, 5000);
-    }
 
-    clearDashboard() {
-        this.profiles = [];
-        this.filteredProfiles = [];
-        this.filterStats = {
-            duplicates: 0,
-            blacklist: 0,
-            pastCandidates: 0,
-            noGoCompanies: 0
-        };
-        
-        this.updateDashboardStats();
-        
-        // Clear file input
-        document.getElementById('profiles-file').value = '';
-        document.getElementById('column-mapping').style.display = 'none';
-        
-        // Remove any success messages
-        const successMessages = document.querySelectorAll('.filter-success');
-        successMessages.forEach(msg => msg.remove());
-    }
-
-    // Test function to manually switch to step 2
-    testStep2() {
-        console.log('Testing step 2...');
-        this.currentStep = 2;
-        this.showStep(2);
-        this.updateProgressBar();
-    }
-
-    addCustomNoGo() {
-        const input = document.getElementById('custom-no-go-input');
-        const company = input.value.trim();
-        
-        if (company) {
-            const textarea = document.getElementById('no-go-companies');
-            const currentValue = textarea.value;
-            const newValue = currentValue ? currentValue + '\n' + company : company;
-            textarea.value = newValue;
-            input.value = '';
-            
-            // Save immediately
-            this.saveFilterList('noGoCompanies');
-        }
-    }
-
-    // Step 3 - Profile Summary Mapping functionality
-    setupStep3() {
-        this.loadColumnSelection();
-        this.populateColumnsGrid();
-        this.showSampleRecord();
-    }
-
-    populateColumnsGrid() {
-        if (!this.profiles || this.profiles.length === 0) {
-            return;
-        }
-
-        const columnsGrid = document.getElementById('columns-grid');
-        columnsGrid.innerHTML = '';
-
-        // Use actual keys from the first profile row
-        const actualHeaders = Object.keys(this.profiles[0]);
-
-        actualHeaders.forEach(header => {
-            const columnOption = document.createElement('div');
-            columnOption.className = 'column-option';
-            
-            // Find first non-empty value for this column in all profiles (case-insensitive, trimmed)
-            let sampleValue = '';
-            for (let i = 0; i < this.profiles.length; i++) {
-                const row = this.profiles[i];
-                let foundKey = Object.keys(row).find(
-                    k => k && k.trim().toLowerCase() === header.trim().toLowerCase()
-                );
-                let val = foundKey ? row[foundKey] : '';
-                if (val && String(val).trim()) {
-                    sampleValue = val;
-                    break;
-                }
-            }
-            if (!sampleValue) sampleValue = 'No sample available';
-            
-            columnOption.innerHTML = `
-                <input type="checkbox" value="${header}" ${this.isColumnSelected(header) ? 'checked' : ''}>
-                <div>
-                    <div class="column-name">${header}</div>
-                    <div class="column-sample">Sample: "${sampleValue}"</div>
+            <div class="global-feedback-container">
+                <h4>Global AI Feedback</h4>
+                <p>Provide a general instruction to the AI that will influence all future rankings in this session.</p>
+                <textarea id="global-feedback-input" placeholder="e.g., 'Place a higher emphasis on experience in the FinTech industry.'">${state.rankingProcess.globalFeedback}</textarea>
+                <div class="button-group">
+                    <button id="save-global-feedback" class="btn-save">Save Global Feedback <span id="save-confirmation-global-feedback" class="save-confirmation"></span></button>
                 </div>
-            `;
-            
-            // Add click handler
-            const checkbox = columnOption.querySelector('input[type="checkbox"]');
-            checkbox.addEventListener('change', () => {
-                this.toggleColumnSelection(header);
-                columnOption.classList.toggle('selected', checkbox.checked);
-                this.updateSelectedColumnsCount();
-            });
-            
-            // Set initial selected state
-            if (checkbox.checked) {
-                columnOption.classList.add('selected');
-            }
-            
-            columnsGrid.appendChild(columnOption);
-        });
-    }
+            </div>
 
-    isColumnSelected(columnName) {
-        return this.appData.selectedColumns && this.appData.selectedColumns.includes(columnName);
-    }
-
-    toggleColumnSelection(columnName) {
-        if (!this.appData.selectedColumns) {
-            this.appData.selectedColumns = [];
-        }
-        
-        const index = this.appData.selectedColumns.indexOf(columnName);
-        if (index > -1) {
-            this.appData.selectedColumns.splice(index, 1);
-        } else {
-            this.appData.selectedColumns.push(columnName);
-        }
-    }
-
-    selectAllColumns() {
-        if (!this.headers || this.headers.length === 0) {
-            return;
-        }
-        this.appData.selectedColumns = [...this.headers];
-        this.populateColumnsGrid();
-        this.updateSelectedColumnsCount();
-    }
-
-    clearAllColumns() {
-        this.appData.selectedColumns = [];
-        this.populateColumnsGrid();
-        this.updateSelectedColumnsCount();
-    }
-
-    saveColumnSelection() {
-        this.saveAppData();
-        this.showSavedIndicator('column-selection');
-    }
-
-    previewProfileSummary() {
-        if (!this.appData.selectedColumns || this.appData.selectedColumns.length === 0) {
-            alert('Please select at least one column for the profile summary.');
-            return;
-        }
-
-        const summary = this.generateProfileSummary();
-        this.displayPreview(summary);
-        this.updatePreviewStats(summary);
-        
-        // Show preview section
-        document.getElementById('preview-section').style.display = 'block';
-    }
-
-    generateProfileSummary() {
-        if (!this.profiles || this.profiles.length === 0) {
-            return '';
-        }
-        if (!this.appData.selectedColumns || this.appData.selectedColumns.length === 0) {
-            return '';
-        }
-        
-        // Find the first row with at least one non-empty value in the selected columns
-        let row = null;
-        for (let i = 0; i < this.profiles.length; i++) {
-            const hasValue = this.appData.selectedColumns.some(col => {
-                const val = this.profiles[i][col];
-                if (val && typeof val === 'object') return Object.keys(val).length > 0;
-                return val && String(val).trim();
-            });
-            if (hasValue) {
-                row = this.profiles[i];
-                break;
-            }
-        }
-        
-        if (!row) {
-            return 'No data available for selected columns.';
-        }
-        
-        // Use the same logic as generateProfileSummaryForProfile for consistency
-        return this.generateProfileSummaryForProfile(row);
-    }
-
-    displayPreview(summary) {
-        const previewContent = document.getElementById('preview-content');
-        previewContent.textContent = summary;
-    }
-
-    updatePreviewStats(summary) {
-        const charCount = summary.length;
-        const wordCount = summary.split(/\s+/).filter(word => word.length > 0).length;
-        const selectedColumnsCount = this.appData.selectedColumns ? this.appData.selectedColumns.length : 0;
-
-        document.getElementById('char-count').textContent = charCount;
-        document.getElementById('word-count').textContent = wordCount;
-        document.getElementById('selected-columns-count').textContent = selectedColumnsCount;
-    }
-
-    updateSelectedColumnsCount() {
-        const count = this.appData.selectedColumns ? this.appData.selectedColumns.length : 0;
-        const countElement = document.getElementById('selected-columns-count');
-        if (countElement) {
-            countElement.textContent = count;
-        }
-    }
-
-    copyProfileSummary() {
-        const previewContent = document.getElementById('preview-content');
-        const text = previewContent.textContent;
-        
-        navigator.clipboard.writeText(text).then(() => {
-            // Show temporary success message
-            const copyBtn = document.querySelector('.copy-btn');
-            const originalText = copyBtn.textContent;
-            copyBtn.textContent = 'Copied!';
-            copyBtn.style.backgroundColor = '#8BC34A';
-            
-            setTimeout(() => {
-                copyBtn.textContent = originalText;
-                copyBtn.style.backgroundColor = '#2196F3';
-            }, 2000);
-        }).catch(err => {
-            console.error('Failed to copy text: ', err);
-            alert('Failed to copy to clipboard. Please select and copy manually.');
-        });
-    }
-
-    showSampleRecord() {
-        if (!this.uploadedData || !this.uploadedData.rows || this.uploadedData.rows.length === 0) {
-            return;
-        }
-
-        const sampleRecord = document.getElementById('sample-record');
-        const firstRow = this.uploadedData.rows[0];
-        
-        sampleRecord.innerHTML = '';
-        
-        Object.entries(firstRow).forEach(([key, value]) => {
-            const fieldDiv = document.createElement('div');
-            fieldDiv.className = 'sample-field';
-            fieldDiv.innerHTML = `
-                <div class="field-label">${key}</div>
-                <div class="field-value">${value || '(empty)'}</div>
-            `;
-            sampleRecord.appendChild(fieldDiv);
-        });
-        
-        // Show sample record section
-        document.getElementById('sample-record-section').style.display = 'block';
-    }
-
-    loadColumnSelection() {
-        // Load previously selected columns
-        if (this.appData.selectedColumns) {
-            this.updateSelectedColumnsCount();
-        }
-    }
-
-    // Step 4 - Advanced Pre-filter functionality
-    setupStep4() {
-        this.setupSimilaritySliders();
-        this.loadAdvancedFilterData();
-        this.setupRedFlags();
-        // Add re-filter button logic
-        setTimeout(() => { // ensure DOM is ready
-            const reFilterBtn = document.getElementById('re-filter-btn');
-            if (reFilterBtn) {
-                reFilterBtn.onclick = () => {
-                    this.saveAdvancedFilterSettings();
-                    this.runAdvancedFiltering();
-                };
-            }
-            // Add skip to ranking button logic
-            const skipBtn = document.getElementById('skip-to-ranking-btn');
-            if (skipBtn) {
-                skipBtn.onclick = () => {
-                    this.showStep(5);
-                };
-            }
-        }, 0);
-    }
-
-    setupSimilaritySliders() {
-        const sliders = document.querySelectorAll('.similarity-slider');
-        sliders.forEach(slider => {
-            const valueDisplay = slider.parentElement.querySelector('.threshold-value');
-            // Find the saved indicator for this slider
-            let savedIndicator = null;
-            if (slider.id === 'title-similarity-threshold') {
-                savedIndicator = document.getElementById('title-threshold-saved');
-            } else if (slider.id === 'skills-similarity-threshold') {
-                savedIndicator = document.getElementById('skills-threshold-saved');
-            } else if (slider.id === 'context-similarity-threshold') {
-                savedIndicator = document.getElementById('context-threshold-saved');
-            }
-            slider.addEventListener('input', () => {
-                valueDisplay.textContent = parseFloat(slider.value).toFixed(2);
-            });
-            slider.addEventListener('change', () => {
-                this.saveAdvancedFilterSettings();
-                if (savedIndicator) {
-                    savedIndicator.style.display = 'inline';
-                    savedIndicator.classList.add('show');
-                    setTimeout(() => {
-                        savedIndicator.classList.remove('show');
-                        setTimeout(() => {
-                            savedIndicator.style.display = 'none';
-                        }, 300);
-                    }, 2000);
-                }
-            });
-        });
-    }
-
-    setupRedFlags() {
-        document.querySelectorAll('.flag-option input[type="checkbox"]').forEach(checkbox => {
-            checkbox.addEventListener('change', () => {
-                this.saveRedFlags();
-            });
-        });
-    }
-
-    loadAdvancedFilterData() {
-        // Load title synonyms
-        if (this.appData.titleSynonyms) {
-            document.getElementById('title-synonyms').value = this.appData.titleSynonyms;
-        }
-        
-        // Load essential skills
-        if (this.appData.essentialSkills) {
-            document.getElementById('essential-skills').value = this.appData.essentialSkills;
-        }
-        
-        // Load similarity thresholds
-        if (this.appData.similarityThresholds) {
-            const thresholds = this.appData.similarityThresholds;
-            if (thresholds.title !== undefined) {
-                document.getElementById('title-similarity-threshold').value = thresholds.title;
-                document.getElementById('title-similarity-threshold').parentElement.querySelector('.threshold-value').textContent = thresholds.title.toFixed(2);
-            }
-            if (thresholds.skills !== undefined) {
-                document.getElementById('skills-similarity-threshold').value = thresholds.skills;
-                document.getElementById('skills-similarity-threshold').parentElement.querySelector('.threshold-value').textContent = thresholds.skills.toFixed(2);
-            }
-            if (thresholds.context !== undefined) {
-                document.getElementById('context-similarity-threshold').value = thresholds.context;
-                document.getElementById('context-similarity-threshold').parentElement.querySelector('.threshold-value').textContent = thresholds.context.toFixed(2);
-            }
-        }
-        
-        // Load red flags
-        if (this.appData.redFlags) {
-            this.appData.redFlags.forEach(flag => {
-                const checkbox = document.querySelector(`input[value="${flag}"]`);
-                if (checkbox) checkbox.checked = true;
-            });
-        }
-    }
-
-    saveTitleSynonyms() {
-        this.appData.titleSynonyms = document.getElementById('title-synonyms').value;
-        this.saveAppData();
-        this.showSavedIndicator('title-synonyms');
-    }
-
-    clearTitleSynonyms() {
-        document.getElementById('title-synonyms').value = '';
-        this.appData.titleSynonyms = '';
-        this.saveAppData();
-        this.showSavedIndicator('title-synonyms');
-    }
-
-    saveEssentialSkills() {
-        this.appData.essentialSkills = document.getElementById('essential-skills').value;
-        this.saveAppData();
-        this.showSavedIndicator('essential-skills');
-    }
-
-    clearEssentialSkills() {
-        document.getElementById('essential-skills').value = '';
-        this.appData.essentialSkills = '';
-        this.saveAppData();
-        this.showSavedIndicator('essential-skills');
-    }
-
-    saveRedFlags() {
-        const selectedFlags = [];
-        document.querySelectorAll('.flag-option input[type="checkbox"]:checked').forEach(cb => {
-            selectedFlags.push(cb.value);
-        });
-        this.appData.redFlags = selectedFlags;
-        this.saveAppData();
-        this.showSavedIndicator('red-flags');
-    }
-
-    clearRedFlags() {
-        document.querySelectorAll('.flag-option input[type="checkbox"]').forEach(cb => {
-            cb.checked = false;
-        });
-        this.appData.redFlags = [];
-        this.saveAppData();
-        this.showSavedIndicator('red-flags');
-    }
-
-    saveAdvancedFilterSettings() {
-        if (!this.appData.similarityThresholds) {
-            this.appData.similarityThresholds = {};
-        }
-        
-        this.appData.similarityThresholds.title = parseFloat(document.getElementById('title-similarity-threshold').value);
-        this.appData.similarityThresholds.skills = parseFloat(document.getElementById('skills-similarity-threshold').value);
-        this.appData.similarityThresholds.context = parseFloat(document.getElementById('context-similarity-threshold').value);
-        
-        this.saveAppData();
-    }
-
-    runAdvancedFiltering() {
-        if (!this.profiles || this.profiles.length === 0) {
-            alert('No profiles loaded. Please upload a CSV file first.');
-            return;
-        }
-
-        this.advancedFilteredProfiles = [...this.profiles];
-        const originalCount = this.advancedFilteredProfiles.length;
-
-        // Initialize advancedFilterStats safely
-        this.advancedFilterStats = {
-            titleMatchFailed: 0,
-            skillsMatchFailed: 0,
-            contextFailed: 0,
-            redFlagsDetected: 0
-        };
-
-        // Apply all filters
-        this.applyTitleMatching();
-        this.applySkillsMatching();
-        this.applyContextAnalysis();
-        this.applyRedFlagsFilter();
-
-        const finalCount = this.advancedFilteredProfiles.length;
-        
-        // Update dashboard stats
-        this.updateAdvancedDashboardStats();
-        
-        // Show results
-        this.showAdvancedFilterResults();
-        
-        // Update row range indicators with new profile count
-        this.updateRowRangeIndicators();
-        
-        console.log(`[Scorely] Advanced filtering complete: ${originalCount} → ${finalCount} profiles`);
-    }
-
-    applyContextAnalysis() {
-        const threshold = this.appData.similarityThresholds?.context || 0.5;
-        if (!this.advancedFilterStats) {
-            this.advancedFilterStats = { titleMatchFailed: 0, skillsMatchFailed: 0, contextFailed: 0, redFlagsDetected: 0 };
-        }
-        this.advancedFilteredProfiles = this.advancedFilteredProfiles.filter(profile => {
-            // Simulate company context analysis
-            const companyContext = this.analyzeCompanyContext(profile.company || '');
-            const contextScore = this.calculateContextScore(companyContext);
-            if (contextScore < threshold) {
-                this.advancedFilterStats.contextFailed++;
-                return false;
-            }
-            return true;
-        });
-    }
-
-    applyTitleMatching() {
-        if (!this.advancedFilterStats) {
-            this.advancedFilterStats = { titleMatchFailed: 0, skillsMatchFailed: 0, contextFailed: 0, redFlagsDetected: 0 };
-        }
-        // ... existing logic ...
-        // (Assume similar safe checks for other advanced filter functions)
-    }
-
-    applySkillsMatching() {
-        if (!this.advancedFilterStats) {
-            this.advancedFilterStats = { titleMatchFailed: 0, skillsMatchFailed: 0, contextFailed: 0, redFlagsDetected: 0 };
-        }
-        // ... existing logic ...
-    }
-
-    applyRedFlagsFilter() {
-        if (!this.advancedFilterStats) {
-            this.advancedFilterStats = { titleMatchFailed: 0, skillsMatchFailed: 0, contextFailed: 0, redFlagsDetected: 0 };
-        }
-        if (!this.appData.redFlags || this.appData.redFlags.length === 0) return;
-        this.advancedFilteredProfiles = this.advancedFilteredProfiles.filter(profile => {
-            const hasRedFlag = this.detectRedFlags(profile);
-            if (hasRedFlag) {
-                this.advancedFilterStats.redFlagsDetected++;
-                return false;
-            }
-            return true;
-        });
-    }
-
-    generateProfileSummaryForProfile(profile) {
-        if (!this.validateProfile(profile)) {
-            return profile?.fullName || '';
-        }
-        
-        const summaryParts = this.appData.selectedColumns.map(column => {
-            let value = profile.raw && column in profile.raw ? profile.raw[column] : '';
-            if (value && typeof value === 'object') value = JSON.stringify(value);
-            return String(value ?? '').trim();
-        }).filter(val => val && val.length > 0);
-        
-        return summaryParts.join(' | ');
-    }
-
-    calculateSimilarity(text1, text2) {
-        // Simple similarity calculation (in real implementation, this would use embeddings)
-        const words1 = text1.toLowerCase().split(/\s+/);
-        const words2 = text2.toLowerCase().split(/\s+/);
-        const intersection = words1.filter(word => words2.includes(word));
-        const union = [...new Set([...words1, ...words2])];
-        
-        return union.length > 0 ? intersection.length / union.length : 0;
-    }
-
-    analyzeCompanyContext(company) {
-        // Simulate company context analysis
-        const startupKeywords = ['startup', 'tech', 'innovation', 'ai', 'ml', 'saas', 'fintech'];
-        const enterpriseKeywords = ['enterprise', 'corporate', 'bank', 'insurance', 'government'];
-        
-        const companyLower = company.toLowerCase();
-        const startupScore = startupKeywords.filter(keyword => companyLower.includes(keyword)).length;
-        const enterpriseScore = enterpriseKeywords.filter(keyword => companyLower.includes(keyword)).length;
-        
-        return { startupScore, enterpriseScore };
-    }
-
-    calculateContextScore(context) {
-        // Higher score for startup-like companies
-        return Math.min(1, context.startupScore * 0.3 - context.enterpriseScore * 0.1 + 0.5);
-    }
-
-    detectRedFlags(profile) {
-        if (!this.appData.redFlags) return false;
-        
-        const profileText = this.generateProfileSummaryForProfile(profile);
-        if (!profileText) return false;
-        
-        return this.appData.redFlags.some(flag => {
-            switch (flag) {
-                case 'instability':
-                    return this.detectInstability(profile);
-                case 'stagnation':
-                    return this.detectStagnation(profile);
-                case 'enterprise-only':
-                    return this.detectEnterpriseOnly(profile);
-                case 'freelancer':
-                    return this.detectFreelancer(profile);
-                default:
-                    return false;
-            }
-        });
-    }
-
-    detectInstability(profile) {
-        return false; // Always deterministic for demo
-    }
-
-    detectStagnation(profile) {
-        return false; // Always deterministic for demo
-    }
-
-    detectEnterpriseOnly(profile) {
-        // Simulate enterprise-only detection
-        const enterpriseKeywords = ['enterprise', 'corporate', 'bank', 'insurance', 'government'];
-        const companyLower = profile.company.toLowerCase();
-        return enterpriseKeywords.some(keyword => companyLower.includes(keyword));
-    }
-
-    detectFreelancer(profile) {
-        // Simulate freelancer detection
-        const freelancerKeywords = ['freelance', 'contract', 'consultant', 'self-employed'];
-        const profileText = this.generateProfileSummaryForProfile(profile);
-        if (!profileText) return false;
-        
-        return freelancerKeywords.some(keyword => profileText.toLowerCase().includes(keyword));
-    }
-
-    updateAdvancedDashboardStats() {
-        // Show the number of profiles that entered advanced filtering (after first filter)
-        const initialPassed = this.filteredProfiles ? this.filteredProfiles.length : 0;
-        const passedCount = this.advancedFilteredProfiles ? this.advancedFilteredProfiles.length : 0;
-        const skippedCount = this.advancedFilterStats ? 
-            this.advancedFilterStats.titleMatchFailed + this.advancedFilterStats.skillsMatchFailed + 
-            this.advancedFilterStats.contextFailed + this.advancedFilterStats.redFlagsDetected : 0;
-        const forwardedCount = passedCount;
-
-        document.getElementById('profiles-passed-count').textContent = initialPassed;
-        document.getElementById('profiles-skipped-count').textContent = skippedCount;
-        document.getElementById('profiles-forwarded-count').textContent = forwardedCount;
-
-        if (this.advancedFilterStats) {
-            document.getElementById('title-match-failed-count').textContent = this.advancedFilterStats.titleMatchFailed;
-            document.getElementById('skills-match-failed-count').textContent = this.advancedFilterStats.skillsMatchFailed;
-            document.getElementById('context-failed-count').textContent = this.advancedFilterStats.contextFailed;
-            document.getElementById('red-flags-count').textContent = this.advancedFilterStats.redFlagsDetected;
-        }
-    }
-
-    showAdvancedFilterResults() {
-        const message = `Advanced filtering complete! ${this.advancedFilteredProfiles.length} profiles forwarded to ranking out of ${this.filteredProfiles.length} from previous step.`;
-        
-        const successDiv = document.createElement('div');
-        successDiv.className = 'advanced-filter-success';
-        successDiv.innerHTML = `
-            <div style="background: #EC407A; color: white; padding: 15px; border-radius: 8px; margin: 20px 0; text-align: center;">
-                <strong>✓ ${message}</strong>
+            <div class="results-filters">
+                <div class="filter-buttons">
+                    <button class="filter-btn ${activeFilter === 'Top' ? 'active' : ''}" data-filter="Top">Top</button>
+                    <button class="filter-btn ${activeFilter === 'Good' ? 'active' : ''}" data-filter="Good">Good</button>
+                    <button class="filter-btn ${activeFilter === 'Hidden Gems' ? 'active' : ''}" data-filter="Hidden Gems">Hidden Gems</button>
+                    <button class="filter-btn ${activeFilter === 'Hot Signals' ? 'active' : ''}" data-filter="Hot Signals">Hot Signals</button>
+                    <button class="filter-btn ${activeFilter === 'Rejected' ? 'active' : ''}" data-filter="Rejected">Rejected</button>
+                    <button class="filter-btn ${activeFilter === 'All' ? 'active' : ''}" data-filter="All">All</button>
+                </div>
+                <div class="search-container">
+                    <input type="text" id="results-search" placeholder="Search by name, company, skill..." value="${searchQuery}">
+                </div>
+                <div class="export-container">
+                    <button id="export-csv-btn" class="btn-secondary">Export to CSV</button>
+                </div>
+            </div>
+            <div class="results-stats-boxes">
+                <div class="stat-box top">
+                    <span class="stat-title">Top</span>
+                    <span class="stat-count">${topCount}</span>
+                </div>
+                <div class="stat-box good">
+                    <span class="stat-title">Good</span>
+                    <span class="stat-count">${goodCount}</span>
+                </div>
+                 <div class="stat-box hidden-gem">
+                    <span class="stat-title">Hidden</span>
+                    <span class="stat-count">${hiddenGemsCount}</span>
+                </div>
+                <div class="stat-box hot-signal">
+                    <span class="stat-title">Hot</span>
+                    <span class="stat-count">${hotSignalsCount}</span>
+                </div>
+                 <div class="stat-box rejected">
+                    <span class="stat-title">Rejected</span>
+                    <span class="stat-count">${rejectedCount}</span>
+                </div>
+            </div>
+            <div class="results-table-container">
+                <table class="results-table">
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Name</th>
+                            <th>Title</th>
+                            <th>Current Company</th>
+                            <th>LinkedIn</th>
+                            <th>Mutual Connections</th>
+                            <th>Score</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${filteredProfiles.map((profile, index) => `
+                            <tr>
+                                <td>${profile.rank}</td>
+                                <td>${profile[nameCol] || ''} ${profile[lastNameCol] || ''}</td>
+                                <td>${profile[titleCol] || 'N/A'}</td>
+                                <td>${profile[companyCol] || 'N/A'}</td>
+                                <td>
+                                    ${profile[linkedinCol] ? `<a href="${profile[linkedinCol]}" target="_blank" class="mutual-link">🔗 Profile</a>` : 'N/A'}
+                                </td>
+                                <td>
+                                    ${profile[mutualCol] ? `<a href="${profile[mutualCol]}" target="_blank" class="mutual-link">🔗 View</a>` : 'N/A'}
+                                </td>
+                                <td><div class="score-badge" title="Category: ${profile.category}">${profile.score}</div></td>
+                                <td><button class="btn-secondary btn-view" data-index="${rankedProfiles.indexOf(profile)}">View</button></td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
             </div>
         `;
-        
-        const dashboardSection = document.querySelector('#step-4 .form-section:last-child');
-        dashboardSection.insertBefore(successDiv, dashboardSection.firstChild);
-        
-        setTimeout(() => {
-            if (successDiv.parentNode) {
-                successDiv.parentNode.removeChild(successDiv);
+    } else if (status === 'ranking') {
+        // --- RANKING IN PROGRESS VIEW ---
+        resultsHTML = `
+             <div class="ranking-progress-container">
+                <div class="progress-header">
+                    <h3>🔄 Ranking in Progress...</h3>
+                    <p>Using ${state.rankingProcess.model}</p>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${progressPercentage}%"></div>
+                    </div>
+                    <div class="progress-stats">
+                        <span class="progress-text">${progress.current} / ${progress.total} profiles processed</span>
+                        <span class="progress-percentage">${progressPercentage}%</span>
+                    </div>
+                    ${timeRemaining ? `<div class="time-estimate">${timeRemaining}</div>` : ''}
+                </div>
+                <div class="spinner-container">
+                    <div class="spinner"></div>
+                    <p>Processing profile ${progress.current + 1}...</p>
+                </div>
+            </div>
+        `;
+    } else {
+        resultsHTML = `<p class="no-results-yet">Ranking results will appear here once the process starts.</p>`;
+    }
+
+    const step4HTML = `
+        <div class="step-container" id="step-4">
+            <div class="step-header">
+                <h2>Step 4: Review & Rank</h2>
+            </div>
+
+            <div class="ranking-controls-grid">
+                <div class="control-panel">
+                    <div class="panel-section">
+                        <label for="api-key-input">OpenAI API Key</label>
+                        <input type="password" id="api-key-input" placeholder="sk-..." value="${state.rankingProcess.apiKey || ''}">
+                        <small class="help-text">Your API key is stored locally and never shared</small>
+                    </div>
+                    <div class="panel-section">
+                        <label for="model-select">Select Model</label>
+                        <select id="model-select">
+                            ${availableModels.map(model => `<option value="${model}" ${state.rankingProcess.model === model ? 'selected' : ''}>${model}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="panel-section">
+                        <label>Rank Rows</label>
+                        <div class="range-inputs">
+                            <input type="number" id="range-start" value="${state.rankingProcess.rangeStart}" min="2">
+                            <span>-</span>
+                            <input type="number" id="range-end" value="${state.rankingProcess.rangeEnd}">
+                        </div>
+                    </div>
+                     <div class="panel-section stats-display">
+                        <div><span>${profilesToRank.length}</span><p>Total Profiles</p></div>
+                        <div><span>${rankedProfiles.length}</span><p>Ranked</p></div>
+                        <div><span>${remainingToRank}</span><p>Remaining</p></div>
+                    </div>
+                    <div class="panel-section action-buttons">
+                        <button id="start-ranking-btn" class="btn-primary" ${status === 'ranking' ? 'disabled' : ''}>Start Ranking</button>
+                        <button id="pause-ranking-btn" class="btn-secondary" ${status !== 'ranking' ? 'disabled' : ''}>Pause</button>
+                        <button id="stop-ranking-btn" class="btn-clear" ${status !== 'ranking' ? 'disabled' : ''}>Stop</button>
+                    </div>
+                </div>
+                <div class="instructions-panel">
+                    <h4>How to get the best results:</h4>
+                    <p>
+                        1. Start by ranking a small batch of <strong>5-10 profiles</strong>.
+                        <br>
+                        2. Review the initial results. Are they what you expected?
+                        <br>
+                        3. If needed, go back to Step 3 to adjust weights or provide feedback (feedback feature coming soon).
+                        <br>
+                        4. Continue ranking in small batches until you're satisfied with the quality.
+                        <br>
+                        5. Once confident, you can rank the entire list.
+                    </p>
+                </div>
+            </div>
+
+            ${status === 'ranking' ? `
+                <div class="ranking-progress-container">
+                    <div class="progress-header">
+                        <h3>🔄 Ranking in Progress...</h3>
+                        <p>Using ${state.rankingProcess.model}</p>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${progressPercentage}%"></div>
+                        </div>
+                        <div class="progress-stats">
+                            <span class="progress-text">${progress.current} / ${progress.total} profiles processed</span>
+                            <span class="progress-percentage">${progressPercentage}%</span>
+                        </div>
+                        ${timeRemaining ? `<div class="time-estimate">${timeRemaining}</div>` : ''}
+                    </div>
+                    <div class="spinner-container">
+                        <div class="spinner"></div>
+                        <p>Processing profile ${progress.current + 1}...</p>
+                    </div>
+                </div>
+            ` : ''}
+            
+            <div id="results-container">
+                ${resultsHTML}
+            </div>
+
+            <!-- Modal for Candidate View -->
+            <div id="candidate-modal" class="modal-overlay hidden">
+                <div class="modal-content">
+                    <button class="modal-close-btn">×</button>
+                    <div id="modal-body">
+                        <!-- Candidate details will be injected here -->
+                    </div>
+                </div>
+            </div>
+
+            <div class="navigation-buttons">
+                <button id="back-step-4" class="btn-secondary">← Back</button>
+                <button id="export-results" class="btn-primary" disabled>Export Results</button>
+            </div>
+        </div>
+    `;
+    wrapper.innerHTML = step4HTML;
+
+    // Add event listeners for view buttons if they exist
+    wrapper.querySelectorAll('.btn-view').forEach(button => {
+        button.addEventListener('click', (e) => {
+            const profileIndex = e.target.dataset.index;
+            openCandidateView(profileIndex);
+        });
+    });
+
+    // Filter and Search Listeners
+    if (status === 'complete') {
+        wrapper.querySelectorAll('.filter-btn').forEach(button => {
+            button.addEventListener('click', (e) => {
+                state.rankingProcess.activeFilter = e.target.dataset.filter;
+                render();
+            });
+        });
+
+        const searchInput = wrapper.querySelector('#results-search');
+        searchInput.addEventListener('input', (e) => {
+            state.rankingProcess.searchQuery = e.target.value;
+            render();
+        });
+
+        wrapper.querySelector('#export-csv-btn').addEventListener('click', () => {
+            // This could be a dropdown in a real app
+            const exportType = prompt("Export which category? (Top+Good, All, Rejected, Hidden Gems, Hot Signals)", "Top+Good");
+            if (exportType) {
+                exportResultsToCsv(exportType);
             }
-        }, 5000);
-    }
-
-    clearAdvancedDashboard() {
-        this.advancedFilteredProfiles = [];
-        this.advancedFilterStats = {
-            titleMatchFailed: 0,
-            skillsMatchFailed: 0,
-            contextFailed: 0,
-            redFlagsDetected: 0
-        };
-        
-        this.updateAdvancedDashboardStats();
-        
-        const successMessages = document.querySelectorAll('.advanced-filter-success');
-        successMessages.forEach(msg => msg.remove());
-    }
-
-    // Step 5 - Ranking functionality
-    setupStep5() {
-        this.loadRankingSettings();
-        this.setupRankingControls();
-        // Hybrid threshold listeners
-        const topInput = document.getElementById('top-threshold');
-        const borderlineInput = document.getElementById('borderline-threshold');
-        if (topInput && borderlineInput) {
-            const updateLabels = () => {
-                document.getElementById('top-threshold-label').textContent = topInput.value;
-                document.getElementById('top-threshold-label-2').textContent = topInput.value;
-                document.getElementById('borderline-threshold-label').textContent = borderlineInput.value;
-                document.getElementById('borderline-threshold-label-2').textContent = borderlineInput.value;
-            };
-            topInput.addEventListener('input', () => {
-                this.appData.hybridTopThreshold = parseFloat(topInput.value);
-                updateLabels();
-                this.saveAppData();
-            });
-            borderlineInput.addEventListener('input', () => {
-                this.appData.hybridBorderlineThreshold = parseFloat(borderlineInput.value);
-                updateLabels();
-                this.saveAppData();
-            });
-            // Set defaults if not present
-            if (!this.appData.hybridTopThreshold) this.appData.hybridTopThreshold = parseFloat(topInput.value);
-            if (!this.appData.hybridBorderlineThreshold) this.appData.hybridBorderlineThreshold = parseFloat(borderlineInput.value);
-            updateLabels();
-        }
-    }
-
-    loadRankingSettings() {
-        // Load model selection
-        if (this.appData.rankingModel) {
-            const modelRadio = document.querySelector(`input[name='ranking-model'][value='${this.appData.rankingModel}']`);
-            if (modelRadio) modelRadio.checked = true;
-        }
-        // Load row range
-        if (this.appData.rankingRowRange) {
-            document.getElementById('start-row').value = this.appData.rankingRowRange.start;
-            document.getElementById('end-row').value = this.appData.rankingRowRange.end;
-        }
-    }
-
-    setupRankingControls() {
-        // Model selection
-        document.querySelectorAll('input[name="ranking-model"]').forEach(radio => {
-            radio.addEventListener('change', () => {
-                this.appData.rankingModel = radio.value;
-                this.saveAppData();
-            });
-        });
-        // Row range
-        document.getElementById('start-row').addEventListener('change', () => {
-            this.saveRowRange();
-        });
-        document.getElementById('end-row').addEventListener('change', () => {
-            this.saveRowRange();
         });
     }
 
-    saveRowRange() {
-        this.appData.rankingRowRange = {
-            start: parseInt(document.getElementById('start-row').value) || 2,
-            end: parseInt(document.getElementById('end-row').value) || 100
-        };
-        this.saveAppData();
-    }
-
-    startRanking() {
-        // Allow ranking after Step 2 or Step 4
-        let candidates = (this.advancedFilteredProfiles && this.advancedFilteredProfiles.length > 0)
-            ? this.advancedFilteredProfiles
-            : (this.filteredProfiles && this.filteredProfiles.length > 0 ? this.filteredProfiles : []);
-        // Apply row range
-        let start = 2, end = 100;
-        if (this.appData.rankingRowRange) {
-            start = this.appData.rankingRowRange.start;
-            end = this.appData.rankingRowRange.end;
-        } else {
-            // fallback: read from DOM
-            const startInput = document.getElementById('start-row');
-            const endInput = document.getElementById('end-row');
-            if (startInput && endInput) {
-                start = parseInt(startInput.value) || 2;
-                end = parseInt(endInput.value) || 100;
+    // Modal listeners
+    const modal = wrapper.querySelector('#candidate-modal');
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal || e.target.classList.contains('modal-close-btn')) {
+                closeCandidateView();
             }
-        }
-        // Row 1 is header, so index 0 is row 2
-        const rangeCandidates = candidates.slice(start - 2, end - 1 + 1);
-        console.log('Start ranking, candidates:', rangeCandidates);
-        if (!rangeCandidates || rangeCandidates.length === 0) {
-            alert('No candidates in selected row range.');
+        });
+    }
+
+    wrapper.querySelector('#model-select').addEventListener('change', (e) => {
+        state.rankingProcess.model = e.target.value;
+        console.log('Model changed to:', state.rankingProcess.model);
+    });
+    
+    // API Key listener
+    wrapper.querySelector('#api-key-input').addEventListener('input', (e) => {
+        state.rankingProcess.apiKey = e.target.value;
+        // Save to localStorage
+        localStorage.setItem('scorely_api_key', e.target.value);
+    });
+    
+    // Ranking controls with progress simulation
+    wrapper.querySelector('#start-ranking-btn').addEventListener('click', startRankingProcess);
+    wrapper.querySelector('#pause-ranking-btn').addEventListener('click', pauseRankingProcess);
+    wrapper.querySelector('#stop-ranking-btn').addEventListener('click', stopRankingProcess);
+
+    wrapper.querySelector('#save-global-feedback').addEventListener('click', saveGlobalFeedback);
+
+    return wrapper;
+}
+
+function startRankingProcess() {
+    const rangeStart = parseInt(document.getElementById('range-start').value, 10);
+    const rangeEnd = parseInt(document.getElementById('range-end').value, 10);
+    
+    if (rangeStart < 2) {
+        alert('Range start must be 2 or higher (row 1 contains headers)');
+        return;
+    }
+    
+    if (rangeEnd < rangeStart) {
+        alert('Range end must be greater than or equal to range start');
+        return;
+    }
+
+    // Filter for profiles in range that have NOT been ranked yet
+    const profilesToProcess = state.rankingProcess.profilesToRank
+        .slice(rangeStart - 2, rangeEnd - 1)
+        .filter(p => !p.isRanked);
+
+    if (profilesToProcess.length === 0) {
+        alert('All profiles in the selected range have already been ranked.');
+        return;
+    }
+    
+    // --- AI Cost & Accuracy Simulation ---
+    if (state.rankingProcess.globalFeedback) {
+        console.log("--- Applying Global Feedback ---");
+        console.log(state.rankingProcess.globalFeedback);
+        console.log("--------------------------------");
+    }
+
+    state.rankingProcess.status = 'ranking';
+    state.rankingProcess.progress = {
+        current: 0,
+        total: profilesToProcess.length,
+        startTime: Date.now(),
+        estimatedTime: null
+    };
+
+    // We MUST do a full render here to show the progress bar container
+    render(); 
+    
+    // Now we call the REAL (simulated) backend function
+    callRankApi(profilesToProcess, rangeEnd);
+}
+
+async function callRankApi(profilesToProcess, lastRankedIndex) {
+    try {
+        // Check if API key is provided
+        if (!state.rankingProcess.apiKey) {
+            alert('Please enter your OpenAI API key before starting the ranking process.');
+            state.rankingProcess.status = 'stopped';
+            render(true);
             return;
         }
-        // Show loading overlay
-        let loadingOverlay = document.getElementById('scorely-loading-overlay');
-        if (!loadingOverlay) {
-            loadingOverlay = document.createElement('div');
-            loadingOverlay.id = 'scorely-loading-overlay';
-            loadingOverlay.style.position = 'fixed';
-            loadingOverlay.style.top = '0';
-            loadingOverlay.style.left = '0';
-            loadingOverlay.style.width = '100vw';
-            loadingOverlay.style.height = '100vh';
-            loadingOverlay.style.background = 'rgba(33,150,243,0.12)';
-            loadingOverlay.style.zIndex = '5000';
-            loadingOverlay.style.display = 'flex';
-            loadingOverlay.style.alignItems = 'center';
-            loadingOverlay.style.justifyContent = 'center';
-            loadingOverlay.innerHTML = `<div style='background:white;padding:32px 48px;border-radius:16px;box-shadow:0 8px 32px rgba(33,150,243,0.18);font-size:1.3em;color:#2196F3;font-weight:600;display:flex;align-items:center;gap:18px;'><span class='loader' style='width:32px;height:32px;border:4px solid #2196F3;border-top:4px solid #8BC34A;border-radius:50%;display:inline-block;animation:spin 1s linear infinite;'></span>Ranking in progress... Please wait</div>`;
-            document.body.appendChild(loadingOverlay);
-            // Add loader animation
-            const style = document.createElement('style');
-            style.innerHTML = `@keyframes spin { 0% { transform: rotate(0deg);} 100% { transform: rotate(360deg);} }`;
-            document.head.appendChild(style);
-        } else {
-            loadingOverlay.style.display = 'flex';
-        }
-        this.rankingInProgress = true;
-        document.getElementById('start-ranking-btn').disabled = true;
-        document.getElementById('stop-ranking-btn').disabled = false;
-        this.resetRankingStatus();
-        // Always pass a fresh copy to runHybridRanking
-        this.runHybridRanking([...rangeCandidates]);
-    }
 
-    async runHybridRanking(candidatesInput) {
-        const candidates = candidatesInput || this.advancedFilteredProfiles;
-        const total = candidates.length;
-        let ranked = 0;
-        let errors = 0;
-        let batches = 0;
-        this.candidates = [];
-        const progressDiv = document.getElementById('ranking-progress-indicator');
-        progressDiv.style.display = 'flex';
-        // Get thresholds
-        const topThreshold = this.appData.hybridTopThreshold || 0.85;
-        const borderlineThreshold = this.appData.hybridBorderlineThreshold || 0.60;
-        // Economy Mode toggle
-        const economyMode = document.getElementById('economy-mode-toggle') && document.getElementById('economy-mode-toggle').checked;
-        // Prepare ideal profile embeddings
-        let idealEmbeddings = [];
-        // Prepare Hot Signals list
-        const hotSignals = (this.appData.hotSignals || '').split('\n').map(s => s.trim().toLowerCase()).filter(Boolean);
-        try {
-            const idealProfiles = (this.appData.idealProfiles || []).map(p => p.text || p.content || '').filter(Boolean);
-            for (let text of idealProfiles) {
-                idealEmbeddings.push(await this.fetchEmbedding(text));
-            }
-        } catch (e) {
-            alert('Failed to fetch embeddings for ideal profiles: ' + e.message);
-            return;
-        }
-        // Ranking loop
-        for (let i = 0; i < total; i++) {
-            if (!this.rankingInProgress) break;
-            const candidate = candidates[i];
-            
-            // Validate candidate before processing
-            if (!this.validateProfile(candidate)) {
-                console.warn(`[Scorely] Skipping invalid candidate: ${candidate.fullName || 'Unknown'}`);
-                continue;
-            }
-            
-            // Check Hot Signal
-            const isHotSignal = hotSignals.length && hotSignals.some(hs => (candidate.company || '').toLowerCase().includes(hs));
-            candidate.hotSignal = isHotSignal;
-            let result = null;
-            try {
-                // 1. Get candidate embedding
-                const summary = this.generateProfileSummaryForProfile(candidate);
-                if (!summary || summary.trim().length === 0) {
-                    console.warn(`[Scorely] Empty summary for candidate: ${candidate.fullName || 'Unknown'}`);
-                    continue;
-                }
-                const candEmbedding = await this.fetchEmbedding(summary);
-                // 2. Compare to each ideal profile, take max similarity
-                let maxSim = 0;
-                for (let ideal of idealEmbeddings) {
-                    const sim = this.cosineSimilarity(candEmbedding, ideal);
-                    if (sim > maxSim) maxSim = sim;
-                }
-                candidate.embedding = maxSim.toFixed(3);
-                // 3. Decide ranking method
-                if (maxSim >= topThreshold) {
-                    result = await this.rankWithEmbedding(candidate, maxSim, isHotSignal);
-                } else if (maxSim >= borderlineThreshold) {
-                    // Economy Mode: use GPT-3.5-turbo for borderline, GPT-4o for top
-                    let gptModel = 'gpt-4o';
-                    if (economyMode && maxSim < 0.8) {
-                        gptModel = 'gpt-3.5-turbo';
-                    }
-                    result = await this.rankWithHybrid(candidate, maxSim, isHotSignal, gptModel);
-                }
-                // HOT logic: if hotSignal and score >= 70, set hitSignal flag and category to 'hot'
-                if (result && result.hotSignal && result.score >= 70) {
-                    result.hitSignal = true;
-                    result.category = 'hot';
-                }
-                // Only add candidates with score >= borderlineThreshold * 100
-                if (result && result.score >= Math.round(borderlineThreshold * 100)) {
-                    this.candidates.push(result);
-                    ranked++;
-                }
-            } catch (e) {
-                errors++;
-                console.error(`Ranking error for candidate ${candidate.fullName || candidate.company || 'Unknown'}:`, e);
-            }
-            batches = Math.floor((i + 1) / 20) + 1;
-            document.getElementById('batches-processed').textContent = batches;
-            document.getElementById('profiles-ranked').textContent = ranked;
-            document.getElementById('ranking-errors').textContent = errors;
-            this.renderProgressIndicator((i + 1) / total);
-        }
-        progressDiv.style.display = 'none';
-        this.rankingInProgress = false;
-        document.getElementById('start-ranking-btn').disabled = false;
-        document.getElementById('stop-ranking-btn').disabled = true;
-        // Hide loading overlay
-        let loadingOverlay = document.getElementById('scorely-loading-overlay');
-        if (loadingOverlay) loadingOverlay.style.display = 'none';
-        if (ranked === 0) {
-            alert('No candidates were ranked. Check the API key, network connection, and that your data is valid. See the browser console for error details.');
-        }
-        console.log('[Scorely] All ranked candidates:', this.candidates);
-        this.showStep(6);
-        this.renderCandidates();
-        this.updateResultsStats();
-    }
-
-    async rankWithHybrid(candidate, embeddingScore, isHotSignal, gptModelOverride) {
-        let aiSummary = '', strengths = [], concerns = [], explanation = '', aiScore = null;
-        try {
-            const jobDescription = this.appData.jobDescription || '';
-            const idealProfiles = (this.appData.idealProfiles || []).map(p => p.text || p.content || '').filter(Boolean);
-            const summary = this.generateProfileSummaryForProfile(candidate);
-            // DEBUG LOGS
-            console.log('[DEBUG] Candidate:', candidate.fullName, 'Summary sent to AI:', summary);
-            console.log('[DEBUG] selectedColumns:', this.appData.selectedColumns);
-            this.appData.selectedColumns.forEach(col => {
-                console.log('[DEBUG] Column:', col, 'Value:', candidate.raw ? candidate.raw[col] : undefined);
-            });
-            if (!summary || summary.trim().length === 0) {
-                console.warn(`[Scorely] Empty summary for candidate in rankWithHybrid: ${candidate.fullName || 'Unknown'}`);
-                aiSummary = 'AI summary unavailable - empty profile data.';
-            } else {
-                const gptResult = await this.fetchGPTSummary({ summary }, jobDescription, idealProfiles, gptModelOverride);
-                aiSummary = gptResult;
-                // Parse strengths, concerns, explanation, and score from GPT result
-                // Use the last valid score found (to avoid picking up a previous score in the explanation)
-                const scoreMatches = [...gptResult.matchAll(/score[^\d]*(\d{2,3})/gi)];
-                if (scoreMatches.length > 0) {
-                    const lastScore = scoreMatches[scoreMatches.length - 1][1];
-                    aiScore = parseInt(lastScore.trim());
-                }
-                const concernsMatch = gptResult.match(/concerns?[:\-\n]*([\s\S]*?)(\n\*\*|\n- |\nExplanation|$)/i);
-                if (concernsMatch) concerns = concernsMatch[1].split(/\n|\*/).map(s => s.trim()).filter(Boolean);
-                // Improved explanation extraction: get all text after 'Explanation' (including newlines), or fallback to full summary
-                const explanationMatch = gptResult.match(/Explanation[\s\S]*?[:\-\n]+([\s\S]*)/i);
-                if (explanationMatch) explanation = explanationMatch[1].trim();
-                else explanation = aiSummary;
-            }
-        } catch (e) {
-            console.error(`[Scorely] Error in rankWithHybrid for ${candidate.fullName}:`, e);
-            aiSummary = 'AI summary unavailable due to error.';
-        }
-        // Always use AI score if found, else fallback
-        let finalScore = (aiScore && !isNaN(aiScore)) ? aiScore : Math.round(embeddingScore * 100 + 10);
-        
-        // Use the Top Threshold from UI (default 85) instead of hardcoded 90
-        const topThreshold = this.appData.hybridTopThreshold || 0.85;
-        const topThresholdScore = Math.round(topThreshold * 100);
-        
-        let category = 'hot';
-        if (finalScore >= topThresholdScore) category = 'top';
-        else if (finalScore >= 70) category = 'good';
-        else if (finalScore >= 50) category = 'hidden';
-        
-        // If hotSignal and score >= 70, override to hot; else, use calculated category
-        if (!(isHotSignal && finalScore >= 70)) {
-            if (finalScore >= topThresholdScore) category = 'top';
-            else if (finalScore >= 70) category = 'good';
-            else if (finalScore >= 50) category = 'hidden';
-            else category = '';
-        }
-        
-        let linkedin = candidate.linkedin || (candidate.raw && (candidate.raw['LinkedIn'] || candidate.raw['linkedin']));
-        return {
-            ...candidate,
-            score: finalScore,
-            aiScore: aiScore,
-            category,
-            explanation: explanation || 'Ranked by embedding + GPT-4o analysis.',
-            embedding: embeddingScore.toFixed(3),
-            strengths,
-            concerns,
-            hotSignal: isHotSignal,
-            summary: this.generateProfileSummaryForProfile(candidate),
-            aiSummary,
-            linkedin,
-            id: this.candidates.length + 1
+        // Prepare all criteria to send to the AI
+        const criteria = {
+            ...state.rankingCriteria,
+            globalFeedback: state.rankingProcess.globalFeedback,
         };
-    }
 
-    async fetchGPTSummary(profile, jobDescription, idealProfiles, gptModelOverride) {
-        const apiKey = localStorage.getItem('scorely_api_key');
-        if (!apiKey) throw new Error('No OpenAI API key found.');
-        
-        // Ensure profile summary is valid
-        if (!profile.summary || profile.summary.trim().length === 0) {
-            throw new Error('Profile summary is empty or invalid');
-        }
-        
-        // Compose prompt with explicit instruction
-        const prompt = `You are an expert recruiter. Analyze the following candidate profile for fit to the job description and ideal profiles.\n\nJob Description:\n${jobDescription}\n\nIdeal Profiles:\n${idealProfiles.map((p,i)=>`Profile ${i+1}: ${p}`).join('\n')}\n\nCandidate Profile:\n${profile.summary}\n\nReturn:\n- Short summary of experience and fit\n- Main strengths\n- Main concerns (gaps)\n- Explanation for the score (0-100)\n\nIMPORTANT: Do NOT copy text from the ideal profiles. Write a unique summary for the candidate only, based on the Candidate Profile above. Do not use names or details from the ideal profiles in the candidate summary.`;
-        // DEBUG: log the full prompt
-        console.log('[DEBUG] GPT Prompt:', prompt);
-        const model = gptModelOverride || 'gpt-4o';
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        // This is the endpoint for the serverless function
+        const response = await fetch('/.netlify/functions/rank_profiles', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-                model,
-                messages: [{ role: 'user', content: prompt }],
-                max_tokens: 400,
-                temperature: 0.2
-            })
+                profiles: profilesToProcess,
+                criteria: criteria,
+                apiKey: state.rankingProcess.apiKey
+            }),
         });
-        if (!response.ok) throw new Error('GPT API error');
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `API call failed with status: ${response.status}`);
+        }
+
         const data = await response.json();
-        // Log usage to Google Sheets
-        if (data.usage) {
-            const date = new Date().toISOString();
-            const promptTokens = data.usage.prompt_tokens || 0;
-            const completionTokens = data.usage.completion_tokens || 0;
-            const totalCost = this.getModelCost(model, promptTokens, completionTokens);
-            this.logUsageToSheet({date, model, promptTokens, completionTokens, totalCost: totalCost.toFixed(6)});
-        }
-        return data.choices[0].message.content;
-    }
-
-    renderProgressIndicator(progress) {
-        const percent = Math.round(progress * 100);
-        const radius = 28;
-        const circumference = 2 * Math.PI * radius;
-        const offset = circumference * (1 - progress);
-        document.getElementById('ranking-progress-indicator').innerHTML = `
-            <div class="progress-circle">
-                <svg width="64" height="64">
-                    <circle class="progress-bg" cx="32" cy="32" r="28" fill="none" />
-                    <circle class="progress-bar" cx="32" cy="32" r="28" fill="none" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}" />
-                </svg>
-                <div class="progress-text">${percent}%</div>
-            </div>
-        `;
-    }
-
-    // Helper: Log OpenAI usage to Google Sheets
-    async logUsageToSheet({date, model, promptTokens, completionTokens, totalCost}) {
-        const url = "https://script.google.com/a/macros/added-value.co.il/s/AKfycbzf3seMAhiM7N90ep_wvFSl04el-W6aVznRFwhcKbyHzYp4Y5-k8Qa1uU4pmlMO7mzx/exec";
-        const payload = {
-            date,
-            model,
-            promptTokens,
-            completionTokens,
-            totalCost
-        };
-        try {
-            await fetch(url, {
-                method: "POST",
-                mode: "no-cors",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify(payload)
-            });
-        } catch (e) {
-            console.warn("Failed to log usage to Google Sheet:", e);
-        }
-    }
-
-    // OpenAI pricing (as of 2024-06)
-    getModelCost(model, promptTokens, completionTokens) {
-        // Prices per 1K tokens (USD)
-        // gpt-4o: $5.00 / 1M prompt, $15.00 / 1M completion
-        // gpt-4-turbo: $10.00 / 1M prompt, $30.00 / 1M completion
-        // gpt-3.5-turbo: $0.50 / 1M prompt, $1.50 / 1M completion
-        // text-embedding-3-small: $0.02 / 1M tokens
-        if (model === 'gpt-4o') {
-            return ((promptTokens / 1000) * 0.005) + ((completionTokens / 1000) * 0.015);
-        } else if (model === 'gpt-4-turbo') {
-            return ((promptTokens / 1000) * 0.01) + ((completionTokens / 1000) * 0.03);
-        } else if (model === 'gpt-3.5-turbo') {
-            return ((promptTokens / 1000) * 0.0005) + ((completionTokens / 1000) * 0.0015);
-        } else if (model === 'text-embedding-3-small') {
-            return ((promptTokens + completionTokens) / 1000) * 0.00002;
-        }
-        return 0;
-    }
-
-    async fetchEmbedding(text) {
-        const apiKey = localStorage.getItem('scorely_api_key');
-        if (!apiKey) throw new Error('No OpenAI API key found.');
-        const response = await fetch('https://api.openai.com/v1/embeddings', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                input: text,
-                model: 'text-embedding-3-small'
-            })
-        });
-        if (!response.ok) throw new Error('Embedding API error');
-        const data = await response.json();
-        // Log usage to Google Sheets
-        if (data.usage) {
-            const date = new Date().toISOString();
-            const model = 'text-embedding-3-small';
-            const promptTokens = data.usage.prompt_tokens || 0;
-            const completionTokens = data.usage.total_tokens ? data.usage.total_tokens - (data.usage.prompt_tokens || 0) : 0;
-            const totalCost = this.getModelCost(model, promptTokens, completionTokens);
-            this.logUsageToSheet({date, model, promptTokens, completionTokens, totalCost: totalCost.toFixed(6)});
-        }
-        return data.data[0].embedding;
-    }
-
-    sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
-
-    showFeedbackModal() {
-        const modal = document.getElementById('feedback-modal');
-        if (modal) {
-            modal.style.display = 'flex';
-        }
-    }
-
-    closeFeedbackModal() {
-        const modal = document.getElementById('feedback-modal');
-        if (modal) {
-            modal.style.display = 'none';
-        }
-    }
-
-    submitRankingFeedback() {
-        const feedback = document.getElementById('general-feedback').value;
-        const criteria = Array.from(document.querySelectorAll('.criteria-selection input[type="checkbox"]:checked')).map(cb => cb.value);
-        // Save feedback (for demo, just log)
-        console.log('Ranking Feedback:', { feedback, criteria });
-        this.closeFeedbackModal();
-        alert('Thank you for your feedback! The AI will adjust criteria for future runs.');
-    }
-
-    // Step 6 - Results Dashboard functionality
-    setupStep6() {
-        this.currentResultsTab = 'top';
-        this.renderCandidates();
-        this.updateResultsStats();
-    }
-
-    renderCandidates() {
-        const tableBody = document.getElementById('candidates-tbody');
-        if (!tableBody) return;
-        tableBody.innerHTML = '';
-        const candidates = this.getFilteredCandidates();
-        candidates.forEach(candidate => {
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td>${candidate.fullName || ''}</td>
-                <td>${candidate.company || ''}${candidate.hitSignal ? ' <span title="HOT" style="color:#43a047;font-size:1.1em;font-weight:600;vertical-align:middle;background:#e8f5e9;padding:2px 8px;border-radius:6px;">HOT</span>' : candidate.hotSignal ? ' <span title="Hot Signal" style="color:#EC407A;font-size:1.2em;vertical-align:middle;">🔥</span>' : ''}</td>
-                <td>${candidate.title || ''}</td>
-                <td>${candidate.score !== undefined ? candidate.score : ''}${candidate.aiScore && candidate.aiScore !== candidate.score ? ` (AI suggested: ${candidate.aiScore})` : ''}</td>
-                <td>${this.capitalizeCategory(candidate.category)}</td>
-                <td><a class=\"candidate-link\" href=\"#\" onclick=\"event.preventDefault(); event.stopPropagation(); window.open('${candidate.linkedin || (candidate.raw && candidate.raw['LinkedIn']) || '#'}', '_blank'); return false;\">LinkedIn</a></td>
-                <td><button class=\"card-action-btn\" onclick=\"app.showCandidateModal(${candidate.id})\">View</button></td>
-            `;
-            tableBody.appendChild(row);
-        });
-    }
-
-    getFilteredCandidates() {
-        let candidates = this.candidates;
-        // TEMP: Disable tab filter for debugging
-        // if (this.currentResultsTab && this.currentResultsTab !== 'all') {
-        //     candidates = candidates.filter(c => c.category === this.currentResultsTab);
-        // }
-        // Search filter
-        const search = (this.currentSearch || '').toLowerCase();
-        if (search) {
-            candidates = candidates.filter(c =>
-                c.fullName.toLowerCase().includes(search) ||
-                c.company.toLowerCase().includes(search) ||
-                c.summary.toLowerCase().includes(search) ||
-                (c.strengths && c.strengths.join(' ').toLowerCase().includes(search)) ||
-                (c.concerns && c.concerns.join(' ').toLowerCase().includes(search))
-            );
-        }
-        return candidates;
-    }
-
-    switchResultsTab(tab) {
-        this.currentResultsTab = tab;
-        document.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.tab === tab);
-        });
-        this.renderCandidates();
-        this.updateResultsStats();
-    }
-
-    searchResults() {
-        this.currentSearch = document.getElementById('results-search').value;
-        this.renderCandidates();
-        this.updateResultsStats();
-    }
-
-    updateResultsStats() {
-        const counts = { top: 0, good: 0, hidden: 0, hot: 0 };
-        this.candidates.forEach(c => { counts[c.category] = (counts[c.category] || 0) + 1; });
-        document.getElementById('top-count').textContent = counts.top;
-        document.getElementById('good-count').textContent = counts.good;
-        document.getElementById('hidden-count').textContent = counts.hidden;
-        document.getElementById('hot-count').textContent = counts.hot;
-    }
-
-    capitalizeCategory(cat) {
-        if (cat === 'top') return 'Top';
-        if (cat === 'good') return 'Good';
-        if (cat === 'hidden') return 'Hidden Gems';
-        if (cat === 'hot') return 'Hot Signals';
-        return cat;
-    }
-
-    showCandidateModal(id) {
-        const candidate = this.candidates.find(c => c.id === id);
-        if (!candidate) return;
-        const modal = document.getElementById('candidate-modal');
-        const details = document.getElementById('candidate-details');
-        // Main info - redesigned, no duplicate heading, clear sections
-        let hiddenGemBanner = '';
-        if (candidate.category === 'hidden') {
-            hiddenGemBanner = `<div style='background:#fffde7;color:#EC407A;padding:10px 18px;border-radius:8px 8px 0 0;font-weight:600;font-size:1.05em;margin-bottom:12px;'><span style='font-size:1.2em;'>💎</span> <b>Hidden Gem:</b> This candidate received a borderline score, but the AI detected unique or promising signals. Consider reviewing manually for potential fit.</div>`;
-        }
-        details.innerHTML = `
-            ${candidate.hitSignal ? `<div style='background:#e8f5e9;color:#43a047;padding:10px 18px;border-radius:8px 8px 0 0;font-weight:600;font-size:1.1em;margin-bottom:12px;'><span style='font-size:1.2em;'>✔️</span> HOT: This candidate currently works at a Hot Signal company and is likely open to new opportunities.</div>` : candidate.hotSignal ? `<div style='background:#fff3e0;color:#EC407A;padding:10px 18px;border-radius:8px 8px 0 0;font-weight:600;font-size:1.1em;margin-bottom:12px;'><span style='font-size:1.3em;'>🔥</span> This candidate currently works at a Hot Signal company: <b>${candidate.company}</b></div>` : ''}
-            ${hiddenGemBanner}
-            <div style='padding: 0 0 10px 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 12px;'>
-                <span style='font-size:1.35em;font-weight:700;color:#2196F3;'>${candidate.fullName || ''}</span>
-                <span style='font-size:1em;color:#666;margin-left:10px;'>${candidate.title || ''}</span>
-            </div>
-            <div style='margin-bottom: 10px;'><b>Company:</b> ${candidate.company || ''}</div>
-            <div style='margin-bottom: 10px;'><b>Score:</b> <span style='color:#8BC34A;font-weight:700;'>${candidate.aiScore !== null && candidate.aiScore !== undefined ? candidate.aiScore : candidate.score}</span></div>
-            <div style='margin-bottom: 10px;'><b>Category:</b> ${this.capitalizeCategory(candidate.category)}</div>
-            <div style='margin-bottom: 10px;'><b>LinkedIn:</b> <a class='candidate-link' href='#' onclick="event.preventDefault(); event.stopPropagation(); window.open('${candidate.linkedin || (candidate.raw && candidate.raw['LinkedIn']) || '#'}', '_blank'); return false;">Profile</a></div>
-            <div style='margin-bottom: 10px;'><b>Embedding Score:</b> ${candidate.embedding !== undefined ? candidate.embedding : ''}</div>
-            <div style='margin-bottom: 14px;'><b>AI Summary:</b><br><div style='background:#f5faff;padding:10px 12px;border-radius:8px;margin-top:4px;white-space:pre-line;'>${candidate.aiSummary || 'AI summary of experience and fit will appear here.'}</div></div>
-            <div style='margin-bottom: 10px;'><b>Strengths:</b><br><span style='color:#1976d2;'>${(candidate.strengths && candidate.strengths.length) ? candidate.strengths.join('<br>') : 'None listed.'}</span></div>
-            <div style='margin-bottom: 10px;'><b>Concerns:</b><br><span style='color:#EC407A;'>${(candidate.concerns && candidate.concerns.length) ? candidate.concerns.join('<br>') : 'None listed.'}</span></div>
-            <div style='margin:12px 0;'><b>Notes:</b><br><textarea id='candidate-notes' style='width:100%;min-height:48px;'>${candidate.notes || ''}</textarea></div>
-            <div style="margin-top: 18px; display: flex; gap: 10px; flex-wrap: wrap;">
-                <button class="card-action-btn" onclick="app.showRawDataModal(${candidate.id})">Details</button>
-                <button class="export-btn" onclick="app.exportCandidatePDF()">Export as PDF</button>
-                <button class="card-action-btn" onclick="app.openRecategorizeModal(${candidate.id})">Re-categorize</button>
-                <button class="card-action-btn close-btn" onclick="app.closeCandidateModal()">Close</button>
-            </div>
-        `;
-        // Save notes on blur
-        setTimeout(() => {
-            const notesInput = document.getElementById('candidate-notes');
-            if (notesInput) {
-                notesInput.addEventListener('blur', () => {
-                    candidate.notes = notesInput.value;
-                });
+        
+        // --- Update state with the results from the API ---
+        
+        // Update the original profiles with the new data
+        data.rankedProfiles.forEach(rankedProfile => {
+            const originalProfile = state.rankingProcess.profilesToRank.find(p => p[state.columnMapping.linkedinUrl] === rankedProfile[state.columnMapping.linkedinUrl]);
+            if(originalProfile) {
+                Object.assign(originalProfile, rankedProfile);
+                if (!state.rankingProcess.rankedProfiles.includes(originalProfile)) {
+                    state.rankingProcess.rankedProfiles.push(originalProfile);
+                }
             }
-        }, 100);
-        modal.style.display = 'flex';
-    }
-
-    closeCandidateModal() {
-        document.getElementById('candidate-modal').style.display = 'none';
-    }
-
-    showRawDataModal(id) {
-        // Show all raw data fields in a separate modal (reuse candidate-modal for simplicity)
-        const candidate = this.candidates.find(c => c.id === id);
-        if (!candidate) return;
-        const modal = document.getElementById('candidate-modal');
-        const details = document.getElementById('candidate-details');
-        details.innerHTML = `<h4>Raw Data</h4>` + Object.entries(candidate.raw || {}).map(([k, v]) =>
-            `<div><strong>${k}:</strong> ${v}</div>`
-        ).join('') + `<div style='margin-top:18px;'><button class='card-action-btn' onclick='app.showCandidateModal(${candidate.id})'>Back</button></div>`;
-        modal.style.display = 'flex';
-    }
-
-    openRecategorizeModal(id) {
-        this.recategorizeId = id;
-        let modal = document.getElementById('recategorize-modal');
-        if (!modal) {
-            modal = document.createElement('div');
-            modal.id = 'recategorize-modal';
-            modal.className = 'recategorize-modal';
-            modal.innerHTML = `
-                <div class='modal-content'>
-                    <h3>Re-categorize Candidate</h3>
-                    <label for='recategorize-category'>New Category:</label>
-                    <select id='recategorize-category'>
-                        <option value='top'>Top</option>
-                        <option value='good'>Good</option>
-                        <option value='hidden'>Hidden Gems</option>
-                        <option value='hot'>Hot Signals</option>
-                    </select>
-                    <label for='recategorize-reason'>Explanation:</label>
-                    <textarea id='recategorize-reason' style='width:100%;min-height:48px;'></textarea>
-                    <div style='margin-top:16px;display:flex;gap:10px;'>
-                        <button class='card-action-btn' onclick='app.submitRecategorize()'>Submit</button>
-                        <button class='card-action-btn close-btn' onclick='app.closeRecategorizeModal()'>Cancel</button>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(modal);
-        }
-        // Set current category
-        document.getElementById('recategorize-category').value = this.candidates.find(c => c.id === id).category;
-        modal.style.display = 'flex';
-    }
-    closeRecategorizeModal() {
-        const modal = document.getElementById('recategorize-modal');
-        if (modal) modal.style.display = 'none';
-    }
-    submitRecategorize() {
-        const id = this.recategorizeId;
-        const newCat = document.getElementById('recategorize-category').value;
-        const reason = document.getElementById('recategorize-reason').value.trim();
-        if (!reason) {
-            alert('Please provide a reason for re-categorization.');
-            return;
-        }
-        const candidate = this.candidates.find(c => c.id === id);
-        if (candidate) {
-            candidate.category = newCat;
-            if (!candidate.recategorizeHistory) candidate.recategorizeHistory = [];
-            candidate.recategorizeHistory.push({ newCat, reason, date: new Date().toISOString() });
-        }
-        this.closeRecategorizeModal();
-        this.renderCandidates();
-        this.updateResultsStats();
-        alert('Candidate re-categorized successfully!');
-    }
-
-    removeCandidateCard(id) {
-        this.candidates = this.candidates.filter(c => c.id !== id);
-        this.renderCandidates();
-        this.updateResultsStats();
-    }
-
-    exportResultsCSV() {
-        // Show export options modal
-        this.showExportOptionsModal();
-    }
-
-    showExportOptionsModal() {
-        let modal = document.getElementById('export-options-modal');
-        if (!modal) {
-            modal = document.createElement('div');
-            modal.id = 'export-options-modal';
-            modal.className = 'feedback-modal';
-            modal.innerHTML = `
-                <div class='feedback-content'>
-                    <h3>Export Options</h3>
-                    <p>Choose what profiles to export:</p>
-                    <div style='margin: 20px 0;'>
-                        <label style='display: block; margin-bottom: 15px; cursor: pointer;'>
-                            <input type='radio' name='export-option' value='top-good' checked style='margin-right: 10px;'>
-                            <strong>Top & Good Profiles Only</strong><br>
-                            <span style='color: #666; font-size: 0.9rem;'>Export only candidates with scores ≥ 70 (Top and Good categories)</span>
-                        </label>
-                        <label style='display: block; margin-bottom: 15px; cursor: pointer;'>
-                            <input type='radio' name='export-option' value='hot' style='margin-right: 10px;'>
-                            <strong>HOT Signal Profiles</strong><br>
-                            <span style='color: #666; font-size: 0.9rem;'>Export candidates working at Hot Signal companies with scores ≥ 70</span>
-                        </label>
-                        <label style='display: block; margin-bottom: 15px; cursor: pointer;'>
-                            <input type='radio' name='export-option' value='all-ranked' style='margin-right: 10px;'>
-                            <strong>All Ranked Profiles</strong><br>
-                            <span style='color: #666; font-size: 0.9rem;'>Export all candidates that passed the ranking threshold (including Hidden Gems)</span>
-                        </label>
-                        <label style='display: block; margin-bottom: 15px; cursor: pointer;'>
-                            <input type='radio' name='export-option' value='all-including-rejected' style='margin-right: 10px;'>
-                            <strong>All Profiles (Including Rejected)</strong><br>
-                            <span style='color: #666; font-size: 0.9rem;'>Export all uploaded profiles, including those that didn't meet the ranking threshold</span>
-                        </label>
-                    </div>
-                    <div style='margin-top: 20px; display: flex; gap: 10px;'>
-                        <button class='save-btn' onclick='app.performExport()'>Export CSV</button>
-                        <button class='secondary-btn' onclick='app.closeExportOptionsModal()'>Cancel</button>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(modal);
-        }
-        modal.style.display = 'flex';
-    }
-
-    closeExportOptionsModal() {
-        const modal = document.getElementById('export-options-modal');
-        if (modal) {
-            modal.style.display = 'none';
-        }
-    }
-
-    performExport() {
-        const exportOption = document.querySelector('input[name="export-option"]:checked').value;
-        let profilesToExport = [];
-        let filename = '';
-
-        switch (exportOption) {
-            case 'top-good':
-                profilesToExport = this.candidates.filter(c => c.category === 'top' || c.category === 'good');
-                filename = 'scorely_top_good_profiles.csv';
-                break;
-            case 'hot':
-                profilesToExport = this.candidates.filter(c => c.hitSignal);
-                filename = 'scorely_hot_signal_profiles.csv';
-                break;
-            case 'all-ranked':
-                profilesToExport = this.candidates;
-                filename = 'scorely_all_ranked_profiles.csv';
-                break;
-            case 'all-including-rejected':
-                // Include all profiles from the original upload, with ranking info if available
-                profilesToExport = this.profiles.map(profile => {
-                    const rankedProfile = this.candidates.find(c => c.fullName === profile.fullName);
-                    return {
-                        ...profile,
-                        score: rankedProfile ? rankedProfile.score : 'Not ranked',
-                        aiScore: rankedProfile ? rankedProfile.aiScore : 'Not ranked',
-                        category: rankedProfile ? rankedProfile.category : 'Not ranked',
-                        aiSummary: rankedProfile ? rankedProfile.aiSummary : 'Not ranked',
-                        strengths: rankedProfile && rankedProfile.strengths ? rankedProfile.strengths.join('; ') : '',
-                        concerns: rankedProfile && rankedProfile.concerns ? rankedProfile.concerns.join('; ') : '',
-                        explanation: rankedProfile ? rankedProfile.explanation : 'Not ranked',
-                        hitSignal: rankedProfile ? rankedProfile.hitSignal : false,
-                        hotSignal: rankedProfile ? rankedProfile.hotSignal : false,
-                        embedding: rankedProfile ? rankedProfile.embedding : 'Not ranked'
-                    };
-                });
-                filename = 'scorely_all_profiles_with_ranking.csv';
-                break;
-        }
-
-        if (profilesToExport.length === 0) {
-            alert('No profiles match the selected export criteria.');
-            this.closeExportOptionsModal();
-            return;
-        }
-
-        // Create CSV content
-        const headers = [
-            'Name', 'Company', 'Title', 'Score', 'AI Score', 'Category', 
-            'LinkedIn', 'AI Summary', 'Strengths', 'Concerns', 'Explanation',
-            'HOT Signal', 'Hot Signal Company', 'Embedding Score'
-        ];
-
-        const csvContent = [
-            headers.join(','),
-            ...profilesToExport.map(profile => [
-                `"${(profile.fullName || '').replace(/"/g, '""')}"`,
-                `"${(profile.company || '').replace(/"/g, '""')}"`,
-                `"${(profile.title || '').replace(/"/g, '""')}"`,
-                profile.score || '',
-                profile.aiScore || '',
-                profile.category || '',
-                `"${(profile.linkedin || (profile.raw && profile.raw['LinkedIn']) || '').replace(/"/g, '""')}"`,
-                `"${(profile.aiSummary || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`,
-                `"${(profile.strengths || []).join('; ').replace(/"/g, '""')}"`,
-                `"${(profile.concerns || []).join('; ').replace(/"/g, '""')}"`,
-                `"${(profile.explanation || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`,
-                profile.hitSignal ? 'Yes' : 'No',
-                profile.hotSignal ? 'Yes' : 'No',
-                profile.embedding || ''
-            ].join(','))
-        ].join('\n');
-
-        // Download the file
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        const url = URL.createObjectURL(blob);
-        link.setAttribute('href', url);
-        link.setAttribute('download', filename);
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-
-        this.closeExportOptionsModal();
-        alert(`Exported ${profilesToExport.length} profiles to ${filename}`);
-    }
-
-    exportCandidatePDF() {
-        alert('PDF export is a demo. In production, this would generate a PDF of the candidate profile.');
-    }
-
-    resetRankingStatus() {
-        document.getElementById('batches-processed').textContent = '0';
-        document.getElementById('profiles-ranked').textContent = '0';
-        document.getElementById('ranking-errors').textContent = '0';
-        this.rankingStatus = {
-            batches: 0,
-            ranked: 0,
-            errors: 0
-        };
-    }
-
-    // Update row range indicators
-    updateRowRangeIndicators() {
-        const startRow = parseInt(document.getElementById('start-row')?.value) || 2;
-        const endRow = parseInt(document.getElementById('end-row')?.value) || 100;
-        const totalProfiles = this.advancedFilteredProfiles ? this.advancedFilteredProfiles.length : 0;
-        
-        // Update the indicators
-        const nextRankingStart = document.getElementById('next-ranking-start');
-        const totalProfilesCount = document.getElementById('total-profiles-count');
-        const currentRangeDisplay = document.getElementById('current-range-display');
-        
-        if (nextRankingStart) nextRankingStart.textContent = startRow;
-        if (totalProfilesCount) totalProfilesCount.textContent = totalProfiles;
-        if (currentRangeDisplay) currentRangeDisplay.textContent = `${startRow}-${endRow}`;
-        
-        // Update the end row if it's less than start row
-        if (endRow < startRow) {
-            document.getElementById('end-row').value = startRow;
-            this.updateRowRangeIndicators();
-        }
-    }
-
-    // Cosine similarity between two vectors
-    cosineSimilarity(vecA, vecB) {
-        let dot = 0, normA = 0, normB = 0;
-        for (let i = 0; i < vecA.length; i++) {
-            dot += vecA[i] * vecB[i];
-            normA += vecA[i] * vecA[i];
-            normB += vecB[i] * vecB[i];
-        }
-        return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-    }
-
-    // Helper function to validate profile data
-    validateProfile(profile) {
-        if (!profile) return false;
-        if (!profile.raw) return false;
-        if (!this.appData.selectedColumns || this.appData.selectedColumns.length === 0) return false;
-        
-        // Check if at least one selected column has data
-        return this.appData.selectedColumns.some(column => {
-            const value = profile.raw[column];
-            if (value && typeof value === 'object') return Object.keys(value).length > 0;
-            return value && String(value).trim().length > 0;
         });
+        
+        // Now sort and rank all profiles
+        state.rankingProcess.rankedProfiles.sort((a, b) => b.score - a.score);
+        state.rankingProcess.rankedProfiles.forEach((p, i) => p.rank = i + 1);
+
+        // Update range for next batch
+        const batchSize = lastRankedIndex - (state.rankingProcess.rangeStart - 1);
+        state.rankingProcess.rangeStart = lastRankedIndex;
+        state.rankingProcess.rangeEnd = lastRankedIndex + batchSize - 1;
+        
+        state.rankingProcess.status = 'complete';
+        render(true);
+
+    } catch (error) {
+        console.error("Error calling ranking API:", error);
+        
+        // Show specific message for API key issues
+        let errorMessage = error.message;
+        if (errorMessage.includes('Invalid OpenAI API key')) {
+            errorMessage = 'Invalid OpenAI API key. Please check your API key and try again.';
+        } else if (errorMessage.includes('insufficient_quota') || errorMessage.includes('billing')) {
+            errorMessage = 'OpenAI API quota exceeded or billing issue. Please check your OpenAI account.';
+        }
+        
+        alert(`An error occurred while ranking: ${errorMessage}`);
+        state.rankingProcess.status = 'stopped';
+        render(true);
     }
 }
 
-// Robust window.app initialization
-if (document.readyState === 'loading') {
-  window.addEventListener('DOMContentLoaded', function() {
-    window.app = new ScorelyApp();
-  });
-} else {
-  window.app = new ScorelyApp();
+function updateRankingProgressDOM(progress) {
+    const { current, total, startTime } = progress;
+    if (!document.querySelector('.progress-fill')) return; // Exit if container isn't on screen
+
+    const progressPercentage = total > 0 ? Math.round((current / total) * 100) : 0;
+    
+    document.querySelector('.progress-fill').style.width = `${progressPercentage}%`;
+    document.querySelector('.progress-text').textContent = `${current} / ${total} profiles processed`;
+    document.querySelector('.progress-percentage').textContent = `${progressPercentage}%`;
+
+    let timeRemaining = '';
+    if (startTime && current > 0) {
+        const elapsed = Date.now() - startTime;
+        const avgTimePerProfile = elapsed / current;
+        const remainingProfiles = total - current;
+        const estimatedRemaining = avgTimePerProfile * remainingProfiles;
+        
+        if (estimatedRemaining > 60000) {
+            timeRemaining = `~${Math.round(estimatedRemaining / 60000)} minutes remaining`;
+        } else {
+            timeRemaining = `~${Math.round(estimatedRemaining / 1000)} seconds remaining`;
+        }
+    }
+    const timeEstimateEl = document.querySelector('.time-estimate');
+    if(timeEstimateEl) timeEstimateEl.innerHTML = timeRemaining;
+
+    const spinnerP = document.querySelector('.spinner-container p');
+    if (spinnerP) spinnerP.textContent = `Processing profile ${current + 1}...`;
 }
 
-// Add global test functions
-window.testStep2 = () => window.app.testStep2();
-window.debugNav = () => window.app.debugNavigation();
+function pauseRankingProcess() {
+    state.rankingProcess.status = 'paused';
+    render(); // NO SCROLL
+}
 
-console.log('Scorely App initialized');
-console.log('Test functions available: testStep2(), debugNav()'); 
+function stopRankingProcess() {
+    state.rankingProcess.status = 'stopped';
+    state.rankingProcess.progress = {
+        current: 0,
+        total: 0,
+        startTime: null,
+        estimatedTime: null
+    };
+    render(); // NO SCROLL
+}
+
+function openCandidateView(index) {
+    const profile = state.rankingProcess.rankedProfiles[index];
+    if (!profile) return;
+
+    // A unique identifier for feedback, using LinkedIn URL or rank as fallback
+    const profileId = profile[state.columnMapping.linkedinUrl] || `rank-${profile.rank}`;
+    profile.uniqueId = profileId; // Store it for later
+
+    const modalBody = document.getElementById('modal-body');
+    const nameCol = state.columnMapping.firstName || state.fileHeaders[0];
+    const lastNameCol = state.columnMapping.lastName || '';
+    const fullName = `${profile[nameCol] || ''} ${profile[lastNameCol] || ''}`.trim();
+    const linkedinCol = state.columnMapping.linkedinUrl || '';
+
+    const { summary, strengths, concerns, scoreReason } = generateAiSummary(profile);
+
+    const modalHTML = `
+        <div class="candidate-modal-header">
+            <h3>${fullName}</h3>
+            <span class="rank-pill">Rank ${profile.rank}</span>
+        </div>
+        
+        <div class="candidate-modal-main-content">
+            <div class="candidate-summary">
+                <h4>AI Analysis</h4>
+                <p>${summary}</p>
+                
+                <h5>Strengths</h5>
+                <ul>${strengths.map(s => `<li>${s}</li>`).join('')}</ul>
+                
+                <h5>Concerns</h5>
+                <ul>${concerns.map(c => `<li>${c}</li>`).join('')}</ul>
+
+                <h5>Score Rationale</h5>
+                <p>${scoreReason}</p>
+            </div>
+            <div class="candidate-sidebar">
+                <div class="sidebar-section">
+                    <strong>AI Score</strong>
+                    <div class="score-badge large">${profile.score}</div>
+                </div>
+                <div class="sidebar-section">
+                    <strong>Embedding Score</strong>
+                    <span>${profile.embeddingScore}</span>
+                </div>
+                <div class="sidebar-section">
+                    <strong>Category</strong>
+                    <span>${profile.category}</span>
+                </div>
+                <div class="sidebar-section">
+                    <strong>LinkedIn Profile</strong>
+                    ${profile[linkedinCol] ? `<a href="${profile[linkedinCol]}" target="_blank">View Profile</a>` : 'N/A'}
+                </div>
+                ${profile.tags && profile.tags.length > 0 ? `
+                <div class="sidebar-section">
+                    <strong>Tags</strong>
+                    <div class="tag-list">${profile.tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>
+                </div>
+                ` : ''}
+                 <div class="sidebar-section actions">
+                    <button id="export-pdf-btn" class="btn-secondary">Export as PDF</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-section feedback-section">
+            <h4>Re-categorize & Teach AI</h4>
+            <p>If you disagree with the AI's score, you can correct it. Your feedback will be used to improve future rankings.</p>
+            <div class="feedback-form">
+                <label for="feedback-score">New Score (0-100)</label>
+                <input type="number" id="feedback-score" min="0" max="100" value="${profile.score}">
+                <label for="feedback-explanation">Explanation (Required)</label>
+                <textarea id="feedback-explanation" placeholder="e.g., 'This candidate's experience at a small startup is highly relevant, AI undervalued it.'"></textarea>
+                <button id="save-feedback-btn" class="btn-primary">Save Feedback</button>
+            </div>
+        </div>
+    `;
+    modalBody.innerHTML = modalHTML;
+    
+    document.getElementById('save-feedback-btn').addEventListener('click', () => saveFeedback(index));
+    document.getElementById('export-pdf-btn').addEventListener('click', () => exportProfileToPdf(profile));
+
+    document.getElementById('candidate-modal').classList.remove('hidden');
+}
+
+function generateAiSummary(profile) {
+    const summary = `This candidate presents as a ${profile.category === 'Top' ? 'strong' : 'viable'} contender based on the provided criteria. Their experience seems to align well with several key areas, though some gaps are noted.`;
+    
+    let strengths = [];
+    if (profile.score > 80) strengths.push('High similarity to ideal profiles.');
+    if (profile.profileSummary.toLowerCase().includes('react')) strengths.push('Possesses key technical skill: React.');
+    if (profile.tags && profile.tags.includes('Hidden Gem')) strengths.push('Experience at a Big Tech company provides a strong foundation.');
+
+    let concerns = [];
+    if (profile.score < 80) concerns.push('Lacks direct experience in one or more secondary skill areas.');
+    if (profile.profileSummary.toLowerCase().includes('0-2 years')) concerns.push('Potential job hopping detected in profile summary.');
+
+    const scoreReason = `The score of ${profile.score} was determined by strong alignment with core requirements, balanced against a noted lack of experience in peripheral skills. The candidate's background in ${profile[state.columnMapping.company] || 'their current role'} was weighted positively.`;
+
+    // Add fallback if empty
+    if (strengths.length === 0) strengths.push('General alignment with role requirements.');
+    if (concerns.length === 0) concerns.push('No major concerns detected.');
+
+    return { summary, strengths, concerns, scoreReason };
+}
+
+function exportProfileToPdf(profile) {
+    const originalTitle = document.title;
+    const nameCol = state.columnMapping.firstName || state.fileHeaders[0];
+    const lastNameCol = state.columnMapping.lastName || '';
+    const fullName = `${profile[nameCol] || ''} ${profile[lastNameCol] || ''}`.trim();
+    
+    document.title = `Scorely Profile - ${fullName}`;
+    window.print();
+    document.title = originalTitle;
+}
+
+function closeCandidateView() {
+    document.getElementById('candidate-modal').classList.add('hidden');
+    document.getElementById('modal-body').innerHTML = ''; // Clear content
+}
+
+function saveFeedback(index) {
+    const profile = state.rankingProcess.rankedProfiles[index];
+    const newScore = document.getElementById('feedback-score').value;
+    const explanation = document.getElementById('feedback-explanation').value;
+
+    if (!explanation) {
+        alert('Explanation is required to save feedback.');
+        return;
+    }
+
+    if (!state.feedback) {
+        state.feedback = [];
+    }
+
+    state.feedback.push({
+        profileId: profile.uniqueId,
+        originalScore: profile.score,
+        newScore: parseInt(newScore, 10),
+        explanation: explanation,
+        timestamp: new Date().toISOString()
+    });
+
+    // Update the profile score in the main state
+    profile.score = parseInt(newScore, 10);
+    
+    // Optional: Re-sort and re-render the list immediately
+    state.rankingProcess.rankedProfiles.sort((a, b) => b.score - a.score);
+    state.rankingProcess.rankedProfiles.forEach((p, i) => p.rank = i + 1);
+
+    console.log('Feedback saved:', state.feedback);
+    alert('Thank you! Your feedback has been saved.');
+    
+    closeCandidateView();
+    render(); // Re-render the main view with updated scores and ranks
+}
+
+function exportResultsToCsv(filter) {
+    let dataToExport = [];
+    const profiles = state.rankingProcess.rankedProfiles;
+
+    switch (filter.toLowerCase()) {
+        case 'top+good':
+            dataToExport = profiles.filter(p => p.category === 'Top' || p.category === 'Good');
+            break;
+        case 'all':
+            dataToExport = profiles;
+            break;
+        case 'rejected':
+            dataToExport = profiles.filter(p => p.category === 'Rejected');
+            break;
+        case 'hidden gems':
+            dataToExport = profiles.filter(p => p.tags && p.tags.includes('Hidden Gem'));
+            break;
+        case 'hot signals':
+            dataToExport = profiles.filter(p => p.tags && p.tags.includes('Hot Signal'));
+            break;
+        default:
+            alert('Invalid export category.');
+            return;
+    }
+
+    if (dataToExport.length === 0) {
+        alert('No profiles to export in this category.');
+        return;
+    }
+
+    // We can customize the headers for the CSV
+    const csvData = dataToExport.map(p => ({
+        Rank: p.rank,
+        Category: p.category,
+        Score: p.score,
+        FirstName: p[state.columnMapping.firstName] || '',
+        LastName: p[state.columnMapping.lastName] || '',
+        Title: p[state.columnMapping.title] || '',
+        Company: p[state.columnMapping.company] || '',
+        LinkedIn: p[state.columnMapping.linkedinUrl] || '',
+        Tags: (p.tags || []).join(', '),
+        ProfileSummary: p.profileSummary
+    }));
+
+    const csv = Papa.unparse(csvData);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `scorely_export_${filter.toLowerCase().replace('+', '_')}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+function saveGlobalFeedback() {
+    state.rankingProcess.globalFeedback = document.getElementById('global-feedback-input').value;
+    showSaveConfirmation('global-feedback');
+    console.log('Global feedback saved:', state.rankingProcess.globalFeedback);
+}
+
+// Initial render
+render(); 
