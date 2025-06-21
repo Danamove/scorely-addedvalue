@@ -88,10 +88,13 @@ function renderHeader() {
     header.querySelectorAll('.wizard-step').forEach(stepEl => {
         stepEl.addEventListener('click', () => {
             const stepNumber = parseInt(stepEl.dataset.step, 10);
-            if (stepNumber === 1) { // Reset if going back to data upload
-                state.fileHeaders = null;
-                state.uploadedFile = null;
+            
+            // Allow navigation only if data is loaded after step 1
+            if (stepNumber > 1 && state.profileData.length === 0) {
+                alert("Please complete Step 1 (upload and map data) before proceeding.");
+                return;
             }
+            
             state.currentStep = stepNumber;
             render(true);
         });
@@ -1785,5 +1788,39 @@ function saveGlobalFeedback() {
     console.log('Global feedback saved:', state.rankingProcess.globalFeedback);
 }
 
+function initializeGlobalListeners() {
+    // API Key Modal listeners
+    const apiKeyModal = document.getElementById('api-key-modal');
+    const settingsBtn = document.getElementById('settings-btn');
+    const closeBtn = apiKeyModal.querySelector('.modal-close-btn');
+    const saveBtn = document.getElementById('save-api-key-btn');
+    const apiKeyInput = document.getElementById('modal-api-key-input');
+
+    const openModal = () => {
+        apiKeyInput.value = localStorage.getItem('scorely_api_key') || '';
+        apiKeyModal.classList.remove('hidden');
+    };
+    const closeModal = () => apiKeyModal.classList.add('hidden');
+
+    settingsBtn.addEventListener('click', openModal);
+    closeBtn.addEventListener('click', closeModal);
+    apiKeyModal.addEventListener('click', (e) => {
+        if (e.target === apiKeyModal) closeModal();
+    });
+
+    saveBtn.addEventListener('click', () => {
+        const key = apiKeyInput.value;
+        if (key && key.startsWith('sk-')) {
+            localStorage.setItem('scorely_api_key', key);
+            state.rankingProcess.apiKey = key;
+            alert('API Key saved successfully!');
+            closeModal();
+        } else {
+            alert('Please enter a valid OpenAI API key, starting with "sk-".');
+        }
+    });
+}
+
 // Initial render
-render(); 
+render(true);
+initializeGlobalListeners();
