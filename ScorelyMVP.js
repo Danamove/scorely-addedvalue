@@ -336,13 +336,24 @@ function generateProfileSummaries() {
                     return reject(new Error("Failed to parse file for summaries."));
                 }
                 
-                state.profileData = results.data.map(profile => {
-                    const summary = Object.values(profile).join('; ');
-                    return { ...profile, profileSummary: summary };
+                const validData = results.data.filter(profile => {
+                    // Add any additional validation logic you want to apply
+                    return true;
                 });
-                
-                console.log(`Generated summaries for ${state.profileData.length} profiles.`);
-                resolve();
+
+                if (validData.length > 0) {
+                    state.profileData = validData.map(profile => {
+                        const summary = Object.values(profile).join('; ');
+                        return { ...profile, profileSummary: summary };
+                    });
+                    // Update stats after processing
+                    state.filteredResults.initialCount = state.profileData.length;
+                    state.filteredResults.remainingCount = state.profileData.length;
+                    console.log(`Generated summaries for ${state.profileData.length} profiles (after handling errors).`);
+                    resolve();
+                } else {
+                    return reject(new Error("Failed to parse file for summaries. The file might be empty or formatted incorrectly."));
+                }
             },
             error: (err) => {
                 console.error("PapaParse error:", err);
