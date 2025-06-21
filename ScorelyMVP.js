@@ -41,11 +41,11 @@ const state = {
         idealProfiles: ['', '', '', ''], // Four separate profile slots
         customTraits: [{ name: '', description: '' }], // Start with one empty trait
         weights: {
-            experience: 50,
-            skills: 50,
-            universities: 50,
-            customTraits: 50,
-            idealProfiles: 50
+            experience: 20,
+            skills: 20,
+            universities: 20,
+            customTraits: 20,
+            idealProfiles: 20
         }
     },
     rankingProcess: {
@@ -89,7 +89,22 @@ function renderHeader() {
         stepEl.addEventListener('click', () => {
             const stepNumber = parseInt(stepEl.dataset.step, 10);
             
-            // Allow navigation only if data is loaded after step 1
+            // If navigating back to step 1 from any other step, perform a full reset.
+            if (stepNumber === 1 && state.currentStep !== 1) {
+                state.fileHeaders = null;
+                state.uploadedFile = null;
+                state.profileData = [];
+                state.columnMapping = {};
+                state.filteredResults = {
+                    initialCount: 0,
+                    rejectedCount: 0,
+                    remainingCount: 0,
+                    rejectedProfiles: []
+                };
+                console.log('Navigated back to Step 1, state fully reset.');
+            }
+
+            // Allow navigation to next steps only if data has been processed from step 1
             if (stepNumber > 1 && state.profileData.length === 0) {
                 alert("Please complete Step 1 (upload and map data) before proceeding.");
                 return;
@@ -188,8 +203,7 @@ function renderStep1_DataAndMapping() {
 
                 <div class="navigation-buttons">
                     <button id="back-to-upload" class="btn-secondary">Back</button>
-                    <button id="save-mapping-btn" class="btn-save">Save Mapping <span id="save-confirmation-mapping" class="save-confirmation"></span></button>
-                    <button id="next-step-1" class="btn-primary">Continue to Filters →</button>
+                    <button id="next-step-1" class="btn-primary">Save Mapping & Continue →</button>
                 </div>
             </div>
         `;
@@ -216,7 +230,6 @@ function renderStep1_DataAndMapping() {
             }
         };
 
-        wrapper.querySelector('#save-mapping-btn').addEventListener('click', saveMapping);
         wrapper.querySelector('#next-step-1').addEventListener('click', handleContinue);
     }
     return wrapper;
@@ -232,52 +245,47 @@ function handleFileSelect(event) {
 }
 
 function processData() {
-    if (!state.uploadedFile && !document.getElementById('pasted-data').value) {
-        alert('Please select a file or paste data first.');
+    const pastedData = document.getElementById('pasted-data').value;
+    const fileInput = document.getElementById('file-upload');
+    const file = fileInput.files[0];
+
+    if (!pastedData && !file) {
+        alert('Please upload a file or paste data.');
         return;
     }
+    
+    // Prioritize file over pasted data if both exist
+    const dataToParse = file || pastedData;
 
     const handleComplete = (results) => {
         if (results.data && results.data.length > 0) {
+            // Save the raw file content for later processing
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    state.uploadedFileContent = e.target.result;
+                    console.log("File content stored in state.");
+                };
+                reader.readAsText(file);
+            } else {
+                state.uploadedFileContent = pastedData;
+                console.log("Pasted data stored in state.");
+            }
+
             state.fileHeaders = results.data[0];
-            state.profileData = results.data.slice(1).map(row => {
-                const profile = {};
-                state.fileHeaders.forEach((header, i) => {
-                    profile[header] = row[i];
-                });
-                return profile;
-            });
-            state.filteredResults.initialCount = state.profileData.length;
-            state.filteredResults.remainingCount = state.profileData.length;
-            render(true); // Re-render to show the mapping UI
+            render(true);
         } else {
-            alert('Could not read data from the file. Is it empty?');
+            alert('Could not parse any data from the input. Please check the format.');
         }
     };
-
-    if (state.uploadedFile) {
-        Papa.parse(state.uploadedFile, {
-            header: false,
-            skipEmptyLines: true,
-            complete: handleComplete,
-            error: (error) => {
-                alert('An error occurred while parsing the file.');
-                console.error(error);
-            }
-        });
-    } else {
-         // Handle pasted data
-         const pastedText = document.getElementById('pasted-data').value;
-         Papa.parse(pastedText, {
-            header: false,
-            skipEmptyLines: true,
-            complete: handleComplete,
-            error: (error) => {
-                alert('An error occurred while parsing pasted data.');
-                console.error(error);
-            }
-        });
-    }
+    
+    Papa.parse(dataToParse, {
+        preview: 1, // We only need the first row for headers initially
+        complete: handleComplete,
+        error: (err) => {
+            alert(`An error occurred while parsing: ${err.message}`);
+        }
+    });
 }
 
 async function saveMapping() {
@@ -313,13 +321,13 @@ async function saveMapping() {
 
 function generateProfileSummaries() {
     return new Promise((resolve, reject) => {
-        if (!state.uploadedFile) {
-            const msg = "Cannot generate summaries without uploaded file data.";
+        if (!state.uploadedFileContent) {
+            const msg = "Cannot generate summaries without file content.";
             console.error(msg);
             return reject(new Error(msg));
         }
 
-        Papa.parse(state.uploadedFile, {
+        Papa.parse(state.uploadedFileContent, {
             header: true,
             skipEmptyLines: true,
             complete: (results) => {
