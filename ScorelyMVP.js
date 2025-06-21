@@ -201,14 +201,20 @@ function renderStep1_DataAndMapping() {
     } else {
         wrapper.querySelector('#back-to-upload').addEventListener('click', () => {
             state.fileHeaders = null;
+            state.uploadedFile = null;
             render(true);
         });
+        
+        const handleContinue = async () => {
+            const isSaved = await saveMapping();
+            if (isSaved) {
+                state.currentStep = 2;
+                render(true);
+            }
+        };
+
         wrapper.querySelector('#save-mapping-btn').addEventListener('click', saveMapping);
-        wrapper.querySelector('#next-step-1').addEventListener('click', () => {
-            // Future: Check if required fields are mapped before continuing
-            state.currentStep = 2;
-            render(true);
-        });
+        wrapper.querySelector('#next-step-1').addEventListener('click', handleContinue);
     }
     return wrapper;
 }
@@ -271,38 +277,98 @@ function processData() {
     }
 }
 
-function saveMapping() {
-    const selects = document.querySelectorAll('.mapping-select');
-    selects.forEach(select => {
+async function saveMapping() {
+    const mappingSelects = document.querySelectorAll('.mapping-select');
+    let allRequiredMapped = true;
+    
+    mappingSelects.forEach(select => {
         const key = select.dataset.key;
         const value = select.value;
-        if (key) {
-            state.columnMapping[key] = value;
+        state.columnMapping[key] = value;
+
+        if (key === 'linkedinUrl' && !value) {
+            allRequiredMapped = false;
         }
     });
 
-    // Use the standardized confirmation function
-    showSaveConfirmation('save-confirmation-mapping');
+    if (!allRequiredMapped) {
+        alert('Please map the LinkedIn Profile URL field before continuing.');
+        return false;
+    }
 
-    // After saving mapping, generate profile summaries
-    generateProfileSummaries();
-    console.log('Saved Mapping and Generated Summaries:', state.columnMapping);
+    try {
+        await generateProfileSummaries();
+        showSaveConfirmation('save-confirmation-mapping');
+        console.log("Mapping saved and summaries generated:", state.columnMapping);
+        return true; 
+    } catch (error) {
+        console.error("Error during summary generation:", error);
+        alert(`An error occurred while processing the file: ${error.message}`);
+        return false;
+    }
 }
 
 function generateProfileSummaries() {
-    if (!state.profileData || state.profileData.length === 0) return;
-
-    state.profileData.forEach(profile => {
-        let summary = '';
-        for (const key in profile) {
-            summary += `${key}: ${profile[key]}\n`;
+    return new Promise((resolve, reject) => {
+        if (!state.uploadedFile) {
+            const msg = "Cannot generate summaries without uploaded file data.";
+            console.error(msg);
+            return reject(new Error(msg));
         }
-        profile.profileSummary = summary;
+
+        Papa.parse(state.uploadedFile, {
+            header: true,
+            skipEmptyLines: true,
+            complete: (results) => {
+                if (results.errors.length > 0) {
+                    console.error("Parsing errors:", results.errors);
+                    return reject(new Error("Failed to parse file for summaries."));
+                }
+                
+                state.profileData = results.data.map(profile => {
+                    const summary = Object.values(profile).join('; ');
+                    return { ...profile, profileSummary: summary };
+                });
+                
+                console.log(`Generated summaries for ${state.profileData.length} profiles.`);
+                resolve();
+            },
+            error: (err) => {
+                console.error("PapaParse error:", err);
+                reject(err);
+            }
+        });
     });
 }
 
 function renderStep2_Filters() {
     const wrapper = document.createElement('div');
+
+    // Guard clause: Prevent rendering if no data is loaded OR mapping is incomplete
+    if (state.profileData.length === 0 || !state.columnMapping.linkedinUrl) {
+        wrapper.innerHTML = `
+            <div class="step-container">
+                <div class="step-header">
+                    <h2>Step 2: Filters & Signals</h2>
+                </div>
+                <div class="container-placeholder">
+                    <h3>Data or Mapping Incomplete</h3>
+                    <p>Please go back to Step 1, upload your data, and ensure you have saved the column mapping before applying filters.</p>
+                    <button id="go-to-step-1" class="btn-primary">Go to Step 1</button>
+                </div>
+            </div>
+        `;
+        wrapper.querySelector('#go-to-step-1').addEventListener('click', () => {
+            state.currentStep = 1;
+            render(true);
+        });
+        return wrapper;
+    }
+
+    const { hotSignals, blacklist, pastCandidates, redFlags } = state.filters;
+    const { initialCount, rejectedCount, remainingCount } = state.filteredResults;
+    const hasRunFilter = initialCount > 0;
+
     const noGoCompanies = [
         "Isracard", "Matrix", "Harel Insurance & Finance", "Ness Technologies", "Bank Leumi", 
         "GAV Systems", "Amdocs", "Log-On Software", "Sapiens", "Aman Group", "NICE", 
@@ -313,9 +379,6 @@ function renderStep2_Filters() {
         "Clal Insurance", "Taldor", "Bynet Data Communications", "Hachshara Insurance Company", 
         "Psagot Investment House", "Max It Finance", "bizi"
     ];
-
-    const hasData = state.profileData.length > 0;
-    const { initialCount, rejectedCount, remainingCount } = state.filteredResults;
 
     const step2HTML = `
         <div class="step-container" id="step-2">
@@ -379,18 +442,18 @@ function renderStep2_Filters() {
                 </div>
             </div>
 
-            <div class="filter-dashboard ${!hasData ? 'disabled' : ''}">
+            <div class="filter-dashboard ${!hasRunFilter ? 'disabled' : ''}">
                 <h3>Filtering Dashboard</h3>
-                ${!hasData ? '<p class="description">Upload data in Step 1 to enable filtering.</p>' : ''}
+                ${!hasRunFilter ? '<p class="description">Upload data in Step 1 to enable filtering.</p>' : ''}
                 <div class="stats-container">
-                    <div class="stat-item"><span>${hasData ? initialCount : '-'}</span> Initial Profiles</div>
-                    <div class="stat-item rejected"><span>${hasData ? rejectedCount : '-'}</span> Rejected</div>
-                    <div class="stat-item remaining"><span>${hasData ? remainingCount : '-'}</span> Remaining</div>
+                    <div class="stat-item"><span>${hasRunFilter ? initialCount : '-'}</span> Initial Profiles</div>
+                    <div class="stat-item rejected"><span>${hasRunFilter ? rejectedCount : '-'}</span> Rejected</div>
+                    <div class="stat-item remaining"><span>${hasRunFilter ? remainingCount : '-'}</span> Remaining</div>
                 </div>
                 <div class="button-group">
-                    <button id="run-filter-btn" class="btn-primary" ${!hasData ? 'disabled' : ''}>Run Filter</button>
-                    <button id="reset-filter-btn" class="btn-secondary" ${!hasData ? 'disabled' : ''}>Reset</button>
-                    <button id="view-rejected-btn" class="btn-link" ${!hasData || rejectedCount === 0 ? 'disabled' : ''}>View Rejected Profiles</button>
+                    <button id="run-filter-btn" class="btn-primary" ${!hasRunFilter ? 'disabled' : ''}>Run Filter</button>
+                    <button id="reset-filter-btn" class="btn-secondary" ${!hasRunFilter ? 'disabled' : ''}>Reset</button>
+                    <button id="view-rejected-btn" class="btn-link" ${!hasRunFilter || rejectedCount === 0 ? 'disabled' : ''}>View Rejected Profiles</button>
                 </div>
                 <div id="rejected-profiles-view" class="hidden">
                     <h4>Rejected Profiles</h4>
@@ -459,7 +522,7 @@ function renderStep2_Filters() {
     });
 
     // Add dashboard listeners if it exists
-    if(hasData) {
+    if(hasRunFilter) {
         wrapper.querySelector('#run-filter-btn').addEventListener('click', runFilteringProcess);
         wrapper.querySelector('#reset-filter-btn').addEventListener('click', resetFilteringProcess);
         wrapper.querySelector('#view-rejected-btn').addEventListener('click', toggleRejectedView);
@@ -956,6 +1019,27 @@ function showSaveConfirmation(elementId) {
 
 function renderStep4_ReviewAndRank() {
     const wrapper = document.createElement('div');
+    
+    // Guard clause: Prevent rendering if no data is loaded OR mapping is incomplete
+    if (state.profileData.length === 0 || !state.columnMapping.linkedinUrl) {
+        wrapper.innerHTML = `
+            <div class="step-container">
+                <div class="step-header">
+                    <h2>Step 4: Review & Rank</h2>
+                </div>
+                <div class="container-placeholder">
+                    <h3>Data or Mapping Incomplete</h3>
+                    <p>Please go back to Step 1, upload your data, and ensure you have saved the column mapping before ranking.</p>
+                    <button id="go-to-step-1" class="btn-primary">Go to Step 1</button>
+                </div>
+            </div>
+        `;
+        wrapper.querySelector('#go-to-step-1').addEventListener('click', () => {
+            state.currentStep = 1;
+            render(true);
+        });
+        return wrapper;
+    }
     
     const allProfiles = state.filteredResults.rejectedProfiles 
         ? state.profileData.filter(p => !state.filteredResults.rejectedProfiles.find(rp => rp[state.columnMapping.linkedinUrl] === p[state.columnMapping.linkedinUrl])) 
