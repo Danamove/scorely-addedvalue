@@ -1,4 +1,4 @@
-# Scorely MVP - AI-Powered LinkedIn Profile Ranking
+# Scorely AddedValue - AI-Powered LinkedIn Profile Ranking
 
 A web application that uses AI to rank LinkedIn candidate profiles based on user-defined criteria.
 
