@@ -19,13 +19,27 @@
             <div class="api-key-status">
                 <span class="icon">🔍</span> API Key Set
             </div>
-            <div class="settings-icon">
+            <div id="settings-btn" class="settings-icon">
                 <span class="icon">⚙️</span>
             </div>
         </div>
     </header>
     <div id="app-container">
         <!-- Wizard steps will be dynamically rendered here -->
+    </div>
+    <div id="api-key-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <button class="modal-close-btn">×</button>
+            <div class="modal-section">
+                <h4>OpenAI API Key</h4>
+                <p>Your API key is stored securely in your browser and is only used to communicate with the OpenAI API.</p>
+                <div class="feedback-form">
+                    <label for="modal-api-key-input">API Key</label>
+                    <input type="password" id="modal-api-key-input" placeholder="sk-...">
+                    <button id="save-api-key-btn" class="btn-primary">Save Key</button>
+                </div>
+            </div>
+        </div>
     </div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
     
