@@ -7,7 +7,7 @@ const state = {
     currentStep: 1,
     fileHeaders: null, // Will hold headers from user's file
     columnMapping: {}, // Will store user's mapping
-    uploadedFile: null, // To hold the actual file object
+    uploadedFileContent: null, // To hold the file content as a string
     profileData: [],
     filteredResults: {
         initialCount: 0,
@@ -92,7 +92,7 @@ function renderHeader() {
             // If navigating back to step 1 from any other step, perform a full reset.
             if (stepNumber === 1 && state.currentStep !== 1) {
                 state.fileHeaders = null;
-                state.uploadedFile = null;
+                state.uploadedFileContent = null;
                 state.profileData = [];
                 state.columnMapping = {};
                 state.filteredResults = {
@@ -218,7 +218,7 @@ function renderStep1_DataAndMapping() {
     } else {
         wrapper.querySelector('#back-to-upload').addEventListener('click', () => {
             state.fileHeaders = null;
-            state.uploadedFile = null;
+            state.uploadedFileContent = null;
             render(true);
         });
         
@@ -239,12 +239,13 @@ function handleFileSelect(event) {
     const file = event.target.files[0];
     if (!file) return;
     
-    state.uploadedFile = file;
+    // We don't store the file object in state anymore. 
+    // We read it directly from the input in processData.
     const fileName = file.name;
     document.getElementById('file-name').textContent = fileName;
 }
 
-function processData() {
+async function processData() {
     const pastedData = document.getElementById('pasted-data').value;
     const fileInput = document.getElementById('file-upload');
     const file = fileInput.files[0];
@@ -253,39 +254,60 @@ function processData() {
         alert('Please upload a file or paste data.');
         return;
     }
-    
-    // Prioritize file over pasted data if both exist
-    const dataToParse = file || pastedData;
 
-    const handleComplete = (results) => {
-        if (results.data && results.data.length > 0) {
-            // Save the raw file content for later processing
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    state.uploadedFileContent = e.target.result;
-                    console.log("File content stored in state.");
-                };
-                reader.readAsText(file);
-            } else {
-                state.uploadedFileContent = pastedData;
-                console.log("Pasted data stored in state.");
-            }
-
-            state.fileHeaders = results.data[0];
-            render(true);
-        } else {
-            alert('Could not parse any data from the input. Please check the format.');
-        }
+    // This function will read the file and store its content.
+    // It returns a promise that resolves when the file is read.
+    const readFileContent = (fileToRead) => {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.onerror = (e) => reject(new Error("Error reading file."));
+            reader.readAsText(fileToRead);
+        });
     };
-    
-    Papa.parse(dataToParse, {
-        preview: 1, // We only need the first row for headers initially
-        complete: handleComplete,
-        error: (err) => {
-            alert(`An error occurred while parsing: ${err.message}`);
+
+    try {
+        // Show a loading indicator
+        const processBtn = document.getElementById('process-data-btn');
+        processBtn.textContent = 'Processing...';
+        processBtn.disabled = true;
+
+        // Prioritize file over pasted data
+        if (file) {
+            state.uploadedFileContent = await readFileContent(file);
+            console.log("File content stored in state.");
+        } else {
+            state.uploadedFileContent = pastedData;
+            console.log("Pasted data stored in state.");
         }
-    });
+
+        // Now that content is stored, parse it for headers
+        Papa.parse(state.uploadedFileContent, {
+            preview: 1, // Only need the first row for headers
+            complete: (results) => {
+                if (results.data && results.data.length > 0 && results.data[0].length > 0) {
+                    state.fileHeaders = results.data[0];
+                    render(true); // Now we can safely render the mapping screen
+                } else {
+                    alert('Could not parse any data or headers from the input. Please check the file format.');
+                    state.uploadedFileContent = null; // Clear content if parsing failed
+                    processBtn.textContent = 'Map Columns';
+                    processBtn.disabled = false;
+                }
+            },
+            error: (err) => {
+                alert(`An error occurred while parsing for headers: ${err.message}`);
+                state.uploadedFileContent = null; // Clear content on error
+                processBtn.textContent = 'Map Columns';
+                processBtn.disabled = false;
+            }
+        });
+    } catch (error) {
+        alert(error.message);
+        const processBtn = document.getElementById('process-data-btn');
+        processBtn.textContent = 'Map Columns';
+        processBtn.disabled = false;
+    }
 }
 
 async function saveMapping() {
